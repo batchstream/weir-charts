@@ -2,6 +2,8 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -212,7 +214,7 @@ class PrometheusTests(unittest.TestCase):
         matrix = dict(status='success', data=dict(resultType='matrix', result=[dict(metric=labels, values=values)]))
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            receipt = dict(requests=[])
+            receipt = dict(requests=[], start=990, end=1125)
             for index in range(2):
                 body = json.dumps(matrix).encode()
                 path = directory / str(index)
@@ -340,3 +342,83 @@ class PrometheusTests(unittest.TestCase):
                     del next(row for row in records if row.get('kind') == kind)[missing]
                     options.load_report.write_text(''.join(json.dumps(row)+'\n' for row in records))
                     with self.assertRaises(KeyError): PROM.audit(cfg, options)
+
+    def test_full_audit_uses_only_raw_samples_in_closed_window(self):
+        modes = ('outside-identities', 'outside-nan', 'outside-reset-health', 'inside-uid', 'inside-cgroup',
+                 'inside-source', 'inside-nan', 'inside-up', 'inside-memory', 'inside-queue', 'inside-reset',
+                 'growth-only-outside', 'samples-only-outside')
+        for mode in modes:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                cfg, options = bundle(Path(temporary))
+                path = options.output/'raw.json'
+                raw = json.loads(path.read_bytes())
+                series = raw['data']['result']
+                if mode in ('outside-identities', 'inside-uid', 'inside-cgroup', 'inside-source'):
+                    name = 'container_memory_rss' if mode == 'inside-cgroup' else 'kube_pod_info'
+                    source = next(row for row in series if row['metric']['__name__'] == name)
+                    if mode == 'inside-source': source = series[-1]
+                    extra = copy.deepcopy(source)
+                    extra['metric'].update(uid='old-uid', id='old-cgroup', pod_ip='old-ip')
+                    extra['values'] = [[options.start-1, '1'], [options.end+1, '1']] if mode == 'outside-identities' else [[options.start, '1']]
+                    series.append(extra)
+                    if mode == 'outside-identities':
+                        extra = copy.deepcopy(next(row for row in series if row['metric']['__name__'] == 'kube_pod_container_info'))
+                        del extra['metric']['container_id']
+                        del extra['metric']['image_id']
+                        extra['values'] = [[options.start-1, '1']]
+                        series.append(extra)
+                else:
+                    for row in series:
+                        name = row['metric']['__name__']
+                        if name in PROM.IDENTITY: continue
+                        inside = [point for point in row['values'] if options.start <= point[0] <= options.end]
+                        if mode.startswith('outside-'):
+                            value = 'NaN' if mode == 'outside-nan' else (0 if name in ('up','weir_node_ready') else 999999)
+                            row['values'] = [[options.start-1,value]] + inside + [[options.end+1,value]]
+                        elif mode == 'growth-only-outside' and name.endswith(('_total','_count','_sum')) and name in PROM.APPLICATION:
+                            row['values'] = [[options.start-1,0]] + [[t,50] for t,_ in inside] + [[options.end+1,100]]
+                        elif mode == 'samples-only-outside': row['values'] = [[options.start-1,1],[options.end+1,1]]
+                        elif mode == 'inside-nan' and name == 'container_memory_rss': row['values'][-1][1] = 'NaN'
+                        elif mode == 'inside-up' and name == 'up': row['values'][-1][1] = 0
+                        elif mode == 'inside-memory' and name == 'container_memory_working_set_bytes': row['values'][-1][1] = 1001
+                        elif mode == 'inside-queue' and name == 'weir_store_pending_entries': row['values'][-1][1] = 2
+                        elif mode == 'inside-reset' and name == 'container_cpu_usage_seconds_total': row['values'][-1][1] = 0
+                body = json.dumps(raw).encode(); path.write_bytes(body)
+                receipt_path = options.output/'receipt.json'
+                receipt = json.loads(receipt_path.read_bytes())
+                receipt['requests'][0].update(sha256=PROM.sha(body), bytes=len(body))
+                receipt_path.write_text(json.dumps(receipt))
+                if mode.startswith('outside-'):
+                    result = PROM.audit(cfg, options)
+                    self.assertEqual(result['state'], 'passed')
+                    self.assertEqual(result['files'][str(path)]['sha256'], PROM.sha(body))
+                    self.assertAlmostEqual(result['containers']['uid-0']['resources']['cpu_cores']['peak'], .1)
+                else:
+                    with self.assertRaises(ValueError): PROM.audit(cfg, options)
+
+    def test_window_boundaries_need_two_inside_samples_and_bounded_gaps(self):
+        bounds = (1000, 1200)
+        values = [(999,999), (1000,1), (1090,2), (1180,3), (1200,4), (1201,0)]
+        used, gap = PROM.coverage(values, bounds)
+        self.assertEqual(used, values[1:-1])
+        self.assertEqual(gap, 90)
+        for values in ([(999,1),(1091,2),(1180,3)], [(1000,1),(1090,2),(1201,3)], [(999,1),(1100,2),(1201,3)]):
+            with self.assertRaises(ValueError): PROM.coverage(values, bounds)
+
+    def test_historical_preflight_audit_never_publishes_ready(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cfg, options = bundle(Path(temporary))
+            receipt_path = options.output/'receipt.json'
+            receipt = json.loads(receipt_path.read_bytes()); receipt['phase'] = 'preflight'
+            receipt_path.write_text(json.dumps(receipt))
+            command = [sys.executable, str(ROOT/'scripts/prometheus-evidence.py'), 'audit', '--phase', 'preflight',
+                       '--config', str(options.config), '--run-config', str(options.run_config), '--start', '1970-01-01T00:16:40Z',
+                       '--end', '1970-01-01T00:18:40Z', '--output', str(options.output)]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse((options.output/'ready').exists())
+            command[2] = 'collect'
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('recent raw samples', result.stderr)
+            self.assertFalse((options.output/'ready').exists())

@@ -200,29 +200,27 @@ def merge_raw(directory, receipt, files=None):
             values = merged.setdefault(key, {})
             previous = -math.inf
             for point, raw in series['values']:
-                value = float(raw)
-                if not math.isfinite(point) or not math.isfinite(value) or point <= previous or value < 0:
+                if not math.isfinite(point) or point <= previous:
                     raise ValueError('invalid/non-increasing raw sample')
                 previous = point
+                if not receipt['start'] <= point <= receipt['end']:
+                    continue
+                value = float(raw)
+                if not math.isfinite(value) or value < 0:
+                    raise ValueError('invalid raw sample inside audit window')
                 if point in values and values[point] != value:
                     raise ValueError('conflicting duplicate raw timestamp')
                 values[point] = value
-    result = [(dict(key), sorted(values.items())) for key, values in merged.items()]
+    result = [(dict(key), sorted(values.items())) for key, values in merged.items() if values]
     return result
 
 
 def coverage(values, bounds):
     start, end = bounds
-    points = [p for p in values if start - AGE <= p[0] <= end]
-    if len(points) < 2:
+    used = [p for p in values if start <= p[0] <= end]
+    if len(used) < 2:
         raise ValueError('missing raw series/insufficient samples')
-    before = [p for p in points if p[0] <= start]
-    inside = [p for p in points if p[0] >= start]
-    used = (before[-1:] + inside) if before else inside
-    used = sorted(set(used))
-    if not used:
-        raise ValueError('no samples in observation window')
-    gaps = [max(0, used[0][0] - start), end - used[-1][0]]
+    gaps = [used[0][0] - start, end - used[-1][0]]
     gaps += [b[0] - a[0] for a, b in zip(used, used[1:])]
     if max(gaps) > GAP:
         raise ValueError('raw sample gap or boundary exceeds 90 seconds')
@@ -280,8 +278,6 @@ def audit_container(entry, series, options):
             timestamps = [t for t, _ in values]
             ages = []
             for scrape, observed in seen:
-                if scrape < bounds[0]:
-                    continue
                 index = bisect_right(timestamps, observed + SKEW) - 1
                 # Choose the latest actual statistics no later than exporter time.
                 past = bisect_right(timestamps, observed) - 1
@@ -342,9 +338,8 @@ def audit_application(entry, series, options):
             raise ValueError('scrape or Weir readiness not continuously up')
         summary = {'labels': labels, 'trend': trend(values), 'max_gap_seconds': gap}
         if name.endswith(('_total', '_count', '_sum')):
-            summary['delta'] = counter(values)
-            during = [p for p in values if options.start <= p[0] <= options.end]
-            delta = counter(during) if len(during) >= 2 else 0
+            delta = counter(values)
+            summary['delta'] = delta
             if name == 'weir_rpc_completions_total':
                 if labels.get('status') != 'ok' and delta != 0:
                     raise ValueError('non-OK application RPC increment')
@@ -619,14 +614,17 @@ def main():
     cfg, raw = read_config(options.config)
     if not 0 < options.end - options.start <= 25 * 3600:
         parser.error('window must be positive and at most 25 hours')
-    if options.phase == 'preflight' and (options.end - options.start < 60 or abs(time.time() - options.end) > SKEW):
+    realtime_preflight = options.command == 'collect' and options.phase == 'preflight'
+    if options.phase == 'preflight' and options.end - options.start < 60:
+        parser.error('preflight needs at least 60 seconds of raw samples')
+    if realtime_preflight and abs(time.time() - options.end) > SKEW:
         parser.error('preflight needs at least 60 seconds of recent raw samples')
     if options.command == 'collect' and not collect(cfg, options):
         print('Prometheus retrieval pending; original request receipt preserved, load not cancelled')
         return 2
     try:
         result = audit(cfg, options)
-        if options.phase == 'preflight' and time.time() - options.end > AGE:
+        if realtime_preflight and time.time() - options.end > AGE:
             raise ValueError('preflight expired before publication')
     except (ValueError, KeyError, TypeError, IndexError, OSError) as exc:
         result = {'state': 'failed', 'run': cfg['run'], 'error': str(exc)}
@@ -634,7 +632,7 @@ def main():
         print(json.dumps(result))
         return 1
     save_json(options.output / 'audit.json', result)
-    if options.phase == 'preflight':
+    if realtime_preflight:
         load = next(e for e in cfg['containers'] if e['role'] == 'load')
         marker = '\n'.join((cfg['run'], cfg['run_config_sha256'], load['uid'], sha(raw), str(int(time.time())))) + '\n'
         save(options.output / 'ready', marker.encode())

@@ -97,6 +97,11 @@ python3 scripts/prometheus-evidence.py collect --phase postrun \
 
 The same arguments with `audit` instead of `collect` replay the already saved raw
 responses offline (use a copy without `audit.json`, since verdicts never overwrite).
+An offline preflight audit never publishes `ready`, even when its evidence passes.
+Only a live `collect --phase preflight` can publish that marker: the requested end
+must be within 30 seconds at invocation and no more than 120 seconds old after
+collection and validation. The run/config/UID/freeze bindings and marker TTL still
+apply; an old diagnostic replay cannot release a waiting load.
 Exit 0 means this evidence audit passed; exit 1 means invalid/incomplete evidence;
 exit 2 means HTTP retrieval is pending. A pending request receipt retains the
 HTTP status and completed raw files. A later explicit collection uses a **new**
@@ -107,8 +112,14 @@ Queries use `/api/v1/query` with literal range vectors, bounded 15-minute chunks
 plus 120-second overlap. They do not use `query_range`, `rate`, `increase`,
 `timestamp()` or resampling. Every raw response retains request query/time,
 length, SHA and source identity. HTTP success alone is insufficient: warnings,
-non-matrix results, nonfinite/negative values and non-increasing original sample
-sequences are rejected. Exact overlap duplicates are deduplicated only when the
+non-matrix results and malformed/non-increasing timestamps are rejected. Before
+identity or value validation, retain only real samples in the closed requested
+`[start,end]` interval. A series with no samples in that interval cannot supply or
+contradict an identity. Nonfinite/negative values inside the window are rejected.
+Window-external overlap stays in the unchanged raw files and hashes, but cannot
+affect identity, UP/readiness, resets, trends, resource limits or business deltas.
+There are no implicit boundary anchors or interpolated values. Exact in-window
+overlap duplicates are deduplicated only when the
 complete label identity, timestamp and value agree; conflicts and duplicate
 semantic scrape sources are rejected.
 
@@ -123,14 +134,16 @@ Queries are explicit metric-name groups plus selectors:
   This source has no namespace/UID labels. KSM preflight plus cgroup identity and
   the observer's continuous fixed UID/container/IP/node records bind its lifetime;
   identical Pod names alone never establish identity.
-- KSM Pod/container info: namespace + Pod; validate every returned UID/node/IP/
+- KSM Pod/container info: namespace + Pod; validate every in-window UID/node/IP/
   image/container association. Preflight requires both info families. Later KSM
   gaps remain an explicitly reported cross-check limitation, not an added fatal
   continuity gate; exact cgroup and lifecycle evidence are still mandatory.
 
-All mandatory resource/application series must cover start/end and internal
-intervals with actual gaps <=90s, including the boundary from the last sample to
-run end. No missing points are filled. Resource timestamp T is compared to the
+All mandatory resource/application series need at least two actual in-window
+samples. The gaps from start to the first sample, between samples, and from the
+last sample to end must all be <=90s. No missing points are filled. Counter deltas
+and CPU rates use only those in-window points; growth outside the window cannot
+prove activity inside it. Resource timestamp T is compared to the
 same container's actual `container_last_seen` exporter observation S using the
 latest original statistics at/before S; require S-T <=120s and at most 30s future
 skew. last_seen's value must also agree with its original sample timestamp within
@@ -169,3 +182,9 @@ explicit duration and is only a short-pair result. Source/build hashes, all raw
 receipts and files must be retained. Chart 0.1.0 is unchanged; record its source
 separately from these new standalone tools. Three failed historical runs stay
 failed. Shared CNI enforcement remains an unresolved production gate.
+
+The first live Prometheus preflight was blocked before the SDK runner started:
+startup KSM labels from outside the requested window were incorrectly audited.
+That consumed attempt remains a failed preflight, with no business or 24-hour
+result. Diagnostic replay preserves the original raw files and cannot revive it;
+the window-scoping fix requires a new reviewed run and fresh preflight.
