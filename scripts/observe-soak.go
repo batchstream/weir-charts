@@ -73,17 +73,18 @@ type record struct {
 }
 
 type settings struct {
-	Namespace    string        `json:"namespace"`
-	Job          string        `json:"job"`
-	Release      string        `json:"release"`
-	Output       string        `json:"output"`
-	Interval     time.Duration `json:"interval"`
-	Duration     time.Duration `json:"duration"`
-	Replicas     int           `json:"replicas"`
-	Report       string        `json:"report"`
-	ExitStatus   string        `json:"exitStatus"`
-	RunID        string        `json:"runID"`
-	LoadDuration time.Duration `json:"loadDuration"`
+	Namespace       string        `json:"namespace"`
+	RunConfigSHA256 string        `json:"runConfigSHA256"`
+	Job             string        `json:"job"`
+	Release         string        `json:"release"`
+	Output          string        `json:"output"`
+	Interval        time.Duration `json:"interval"`
+	Duration        time.Duration `json:"duration"`
+	Replicas        int           `json:"replicas"`
+	Report          string        `json:"report"`
+	ExitStatus      string        `json:"exitStatus"`
+	RunID           string        `json:"runID"`
+	LoadDuration    time.Duration `json:"loadDuration"`
 }
 type observer struct {
 	Client    *http.Client
@@ -457,6 +458,7 @@ func (o *observer) run(ctx context.Context) error {
 func main() {
 	cfg := settings{}
 	flag.StringVar(&cfg.Namespace, "namespace", "", "owned namespace")
+	flag.StringVar(&cfg.RunConfigSHA256, "run-config-sha256", "", "canonical frozen run configuration SHA256")
 	flag.StringVar(&cfg.Job, "job", "", "load Job name")
 	flag.StringVar(&cfg.Release, "release", "weir", "Helm release")
 	flag.StringVar(&cfg.Output, "output", "/results/observations.jsonl", "new persistent output file")
@@ -472,7 +474,7 @@ func main() {
 		cfg.RunID = cfg.Job
 	}
 	name := regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
-	if !name.MatchString(cfg.Namespace) || !name.MatchString(cfg.Job) || cfg.Interval < time.Second || cfg.Duration < cfg.Interval || cfg.LoadDuration <= 0 || cfg.Replicas < 1 {
+	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(cfg.RunConfigSHA256) || !name.MatchString(cfg.Namespace) || !name.MatchString(cfg.Job) || cfg.Interval < time.Second || cfg.Duration < cfg.Interval || cfg.LoadDuration <= 0 || cfg.Replicas < 1 {
 		fmt.Fprintln(os.Stderr, "invalid observer configuration")
 		os.Exit(1)
 	}
@@ -493,7 +495,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	err = runner.run(ctx)
-	status := map[string]any{"completed_at": time.Now().UTC(), "passed": err == nil}
+	status := map[string]any{"completed_at": time.Now().UTC(), "passed": err == nil, "runID": cfg.RunID, "namespace": cfg.Namespace, "job": cfg.Job, "runConfigSHA256": cfg.RunConfigSHA256}
 	if err != nil {
 		status["error"] = err.Error()
 	}

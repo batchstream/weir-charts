@@ -19,7 +19,7 @@ contains internal identities; keep raw output local, not in the public repositor
    it also waits for a Prometheus preflight marker. This permits obtaining the
    actual load UID and container ID before any business traffic.
 3. Fill `prometheus-freeze.example.json` from the new Pod/Job snapshot and actual
-   raw series/discovered target labels. Freeze all six containers (3 Weir,
+   raw series/discovered target labels. Freeze both Job UIDs and the observer Pod/container identity, plus all six containers (3 Weir,
    MongoDB, Elasticsearch, waiting load): UID, name, node, IP, container ID, image
    ID, exact cgroup ID and PodSpec CPU/memory limits. Preserve that Pod snapshot.
    Freeze source Prometheus namespace/Pod/UID and the **exact** script SHA256.
@@ -35,7 +35,7 @@ contains internal identities; keep raw output local, not in the public repositor
 
    ```sh
    python3 scripts/prometheus-evidence.py collect --phase preflight \
-     --config /owned/run-prom-freeze.json --start START_UTC --end RECENT_END_UTC \
+     --config /owned/run-prom-freeze.json --run-config /owned/run-config.json --start START_UTC --end RECENT_END_UTC \
      --output /owned/run-preflight
    ```
 
@@ -66,13 +66,32 @@ records retain container ID, node/IP and resource declarations for later binding
 
 After load and observer terminate successfully, export their immutable full files
 with hard links dereferenced, compare every PVC/local SHA and parse every JSONL.
+After **both** Jobs finish, capture exactly those two Jobs and their two Pods.
+Supply their already frozen names explicitly; do not list the namespace or export
+Pod specs/environment. This prints only metadata/status and the Pod node name:
+
+```sh
+kubectl --context "$CONTEXT" -n "$NAMESPACE" get \
+  "job/$RUN" "job/$RUN-observer" "pod/$LOAD_POD" "pod/$OBSERVER_POD" \
+  -o 'jsonpath={"{\"items\":["}{range .items[*]}{"{\"kind\":\""}{.kind}{"\",\"metadata\":"}{.metadata}{",\"status\":"}{.status}{",\"nodeName\":\""}{.spec.nodeName}{"\"},"}{end}{"null]}"}' |
+python3 -c 'import json,sys,datetime; d=json.load(sys.stdin); d["items"]=[x for x in d["items"] if x is not None]; [(x.update(spec={"nodeName":x.pop("nodeName")})) for x in d["items"]]; d["captured_at"]=datetime.datetime.now(datetime.timezone.utc).isoformat(); print(json.dumps(d))' > /owned/run-terminal.json
+```
+
+The observer cannot predict its own future Job completion. Its status instead
+binds namespace/run/config and completion time; the independent snapshot proves
+both exact Job UIDs reached Complete and both exact Pod/container UIDs exited zero.
+All four objects must retain the frozen namespace/task owner labels and Job owner
+references. Kubernetes second-resolution termination/completion timestamps permit
+at most one second of rounding at chronological boundaries.
+
 Use the runner's actual `started_utc` and last `utc`, not Job creation or planned
 end. Run promptly while the existing Prometheus still retains the complete period:
 
 ```sh
 python3 scripts/prometheus-evidence.py collect --phase postrun \
-  --config /owned/run-prom-freeze.json --start ACTUAL_START --end ACTUAL_END \
-  --load-report /owned/run.jsonl --observations /owned/run-observations.jsonl \
+  --config /owned/run-prom-freeze.json --run-config /owned/run-config.json --start ACTUAL_START --end ACTUAL_END \
+  --load-report /owned/run.jsonl --load-exit /owned/run-exit.json \
+  --terminal-snapshot /owned/run-terminal.json --observations /owned/run-observations.jsonl \
   --observer-status /owned/run-observations.jsonl.status.json --output /owned/run-prom-export
 ```
 
@@ -127,6 +146,20 @@ CPU peak and CPU/memory headroom. Queue/active execution cannot exceed their
 same-scrape frozen capacity metrics. Every Pod must show positive in-run
 Read/Mutate/Bulk and record executions/records for both backends, with no non-OK
 RPC increments. Positive pre-existing counters alone do not satisfy this gate.
+
+The audit reads the actual canonical run configuration and verifies its SHA256
+against the freeze. It checks the declared duration against runner start, every
+minute report and terminal elapsed/UTC; a 120-second report cannot satisfy a
+frozen 24-hour run. A separate short-run freeze remains valid and its exact required
+and observed duration appears in the verdict. More than one second of UTC versus
+monotonic disagreement fails; no shortened subwindow is accepted. Mandatory numeric
+gates reject nonfinite JSON numbers, booleans, negative values and missing fields.
+Complete JSONL is parsed, including ownership/cleanup and settings: failure events,
+unknown or failed tails, missing settings, unsuccessful exits or Active final Jobs
+cannot be ignored. The verdict records SHA256 and length for every actual input:
+freeze, canonical run config, full load/observer JSONL, observer status, load exit,
+independent terminal snapshot, query receipt and each raw Prometheus response.
+These file hashes supplement the independent PVC/local export comparison.
 
 Final qualification is **load passed AND lifecycle observer passed AND full
 Prometheus audit passed AND independent trend/remaining-margin review**. Keep the

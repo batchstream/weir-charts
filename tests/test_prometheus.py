@@ -49,6 +49,106 @@ def fixture():
     return entry, series, options
 
 
+def bundle(directory, seconds=120):
+    start, end = 1000, 1000 + seconds
+    entries, all_series = [], []
+    for index in range(6):
+        entry, series, _ = fixture()
+        uid, cid, ip = 'uid-' + str(index), 'container' + str(index), '10.0.0.' + str(index + 1)
+        entry.update(pod='pod-' + str(index), uid=uid, role='weir' if index < 3 else ('load' if index == 5 else 'backend'),
+                     container_id='containerd://' + cid, cadvisor_id='/pod' + uid.replace('-', '_') + '/cri-' + cid,
+                     pod_ip=ip, instance=ip + ':7449')
+        entries.append(entry)
+        for labels, _ in series:
+            name = labels['__name__']
+            if entry['role'] != 'weir' and name in PROM.APPLICATION:
+                continue
+            labels['pod'] = entry['pod']
+            if 'uid' in labels: labels['uid'] = uid
+            if name in PROM.RESOURCE: labels.update(id=entry['cadvisor_id'], name=cid)
+            if name in PROM.APPLICATION: labels['instance'] = entry['instance']
+            if name == 'kube_pod_container_info': labels['container_id'] = entry['container_id']
+            if name == 'kube_pod_info': labels['pod_ip'] = ip
+            values = []
+            for point in range(990, end + 1, 60):
+                value = 1
+                if name.endswith(('_total', '_count', '_sum')): value = point
+                if name == 'container_cpu_usage_seconds_total': value = point / 10
+                if name == 'container_last_seen': value = point
+                if name == 'container_start_time_seconds': value = 900
+                if name == 'container_oom_events_total': value = 0
+                values.append([point, value])
+            all_series.append(dict(metric=labels, values=values))
+    source = dict(url='http://unused', namespace='monitoring', pod='prom', uid='source-uid')
+    labels = dict(__name__='kube_pod_info', namespace='monitoring', pod='prom', uid='source-uid')
+    all_series.append(dict(metric=labels, values=[[1000, '1']]))
+    observer = dict(job_uid='observer-job-id', pod='observer-pod', uid='observer-pod-id', node='worker', pod_ip='10.0.0.9', container='observer', container_id='containerd://observer', image_id='image@sha256:observer')
+    tool_sha = PROM.sha((ROOT/'scripts/prometheus-evidence.py').read_bytes())
+    cfg = dict(run='weir-soak-test', namespace='owned', namespace_uid='namespace-id', owner='task-owner', prometheus=source, containers=entries,
+               observer=observer, load_job_uid='load-job-id', tool_sha256=tool_sha)
+    run = dict(run=cfg['run'], namespace=cfg['namespace'], owner=cfg['owner'], duration=str(seconds)+'s', observerDuration=str(seconds+600)+'s', interval='1m',
+               resourceEvidenceSource='prometheus', evidenceToolSHA256=tool_sha, prometheusSourceUID=source['uid'], serverRevision='a'*40, imageDigest='sha256:'+'b'*64,
+               sdkRevision='c'*40, chartVersion='0.1.0', targets=[e['pod_ip']+':7447' for e in entries[:3]])
+    canonical = json.dumps(run, sort_keys=True, separators=(',', ':')).encode()
+    cfg['run_config_sha256'] = PROM.sha(canonical)
+    run_config = directory/'run.json'; run_config.write_bytes(canonical)
+    config = directory/'freeze.json'; config.write_text(json.dumps(cfg))
+    raw = json.dumps(dict(status='success', data=dict(resultType='matrix', result=all_series))).encode()
+    (directory/'raw.json').write_bytes(raw)
+    request = dict(file='raw.json', sha256=PROM.sha(raw), bytes=len(raw))
+    receipt = dict(state='collected', freeze_sha256=PROM.sha(config.read_bytes()), phase='postrun', start=start, end=end, requests=[request])
+    (directory/'receipt.json').write_text(json.dumps(receipt))
+    settings = dict(namespace=cfg['namespace'], job=cfg['run'], runID=cfg['run'], runConfigSHA256=cfg['run_config_sha256'], interval=60000000000,
+                    loadDuration=seconds*10**9, duration=(seconds+600)*10**9, replicas=3, release='weir')
+    records = [settings]
+    iso = PROM.datetime.fromtimestamp
+    for point in list(range(990, end, 60)) + [end+5]:
+        pods = []
+        for entry in entries:
+            state = dict(running=dict(startedAt=iso(900, PROM.timezone.utc).isoformat()))
+            phase = 'Running'
+            if entry['role'] == 'load' and point > end:
+                phase = 'Succeeded'
+                state = dict(terminated=dict(exitCode=0, reason='Completed', startedAt=iso(900, PROM.timezone.utc).isoformat(), finishedAt=iso(end+1, PROM.timezone.utc).isoformat()))
+            status = dict(name=entry['container'], containerID=entry['container_id'], imageID=entry['image_id'], restartCount=0, ready=phase=='Running', state=state)
+            pods.append(dict(metadata=dict(name=entry['pod'], uid=entry['uid']), spec=dict(nodeName=entry['node']), status=dict(phase=phase, podIP=entry['pod_ip'], containerStatuses=[status])))
+        job_status = dict(active=1) if point <= end else dict(succeeded=1)
+        records.append(dict(utc=iso(point, PROM.timezone.utc).isoformat(), pods=pods[:5], loadPods=pods[5:], job=dict(metadata=dict(name=cfg['run'], uid=cfg['load_job_uid']), status=job_status)))
+    observations = directory/'observations.jsonl'; observations.write_text(''.join(json.dumps(r)+'\n' for r in records))
+    status = dict(passed=True, completed_at=iso(end+6, PROM.timezone.utc).isoformat(), runID=cfg['run'], namespace=cfg['namespace'], job=cfg['run'], runConfigSHA256=cfg['run_config_sha256'])
+    status_file = directory/'status.json'; status_file.write_text(json.dumps(status))
+    first = dict(kind='start', run_id=cfg['run'], started_utc=iso(start, PROM.timezone.utc).isoformat(), duration_ns=seconds*10**9, workers=6, cycles_per_second=5, max_p99_ns=500000000,
+                 server_revision=run['serverRevision'], image_digest=run['imageDigest'], sdk_revision=run['sdkRevision'], chart_version=run['chartVersion'], targets=run['targets'])
+    load_records = [first]
+    for kind in ('owned', 'cleaned'):
+        if kind == 'cleaned':
+            for point in range(start+60, end, 60):
+                cycles=(point-start)*30
+                load_records.append(dict(kind='progress', run_id=cfg['run'], utc=iso(point, PROM.timezone.utc).isoformat(), elapsed_ns=(point-start)*10**9, cycles=cycles,
+                                         verified_reads=cycles*2, verified_mutations=cycles*2, stream_checks=2, cycle_histogram=[cycles]+[0]*11, cycle_overflow=0,
+                                         failures=0, unknown=0, cycle_p99_upper_ns=20000000, interval_p99_upper_ns=20000000))
+        for worker in range(6):
+            load_records.append(dict(kind=kind, worker=worker, target=run['targets'][worker%3], backend='mongo' if worker%2==0 else 'search', sequence=0, duration_ns=0))
+    last = dict(load_records[7])
+    last.update(kind='passed', run_id=cfg['run'], utc=iso(end, PROM.timezone.utc).isoformat(), elapsed_ns=seconds*10**9, cycles=seconds*30,
+                verified_reads=seconds*60, verified_mutations=seconds*60, cycle_histogram=[seconds*30]+[0]*11)
+    load_records.append(last)
+    load = directory/'load.jsonl'; load.write_text(''.join(json.dumps(r)+'\n' for r in load_records))
+    load_exit = directory/'exit.json'; load_exit.write_text('{"exit_code":0}')
+    items=[]
+    for job_name, uid, entry, finished in ((cfg['run'], cfg['load_job_uid'], entries[-1], end+1), (cfg['run']+'-observer', observer['job_uid'], observer, end+7)):
+        meta = dict(name=job_name, uid=uid, namespace=cfg['namespace'], labels={'weir.batchstream.io/owner':cfg['owner']})
+        job = dict(kind='Job', metadata=meta, status=dict(succeeded=1, completionTime=iso(finished+1,PROM.timezone.utc).isoformat(), conditions=[dict(type='Complete',status='True')]))
+        meta = dict(name=entry['pod'], uid=entry['uid'], namespace=cfg['namespace'], labels={'weir.batchstream.io/owner':cfg['owner']}, ownerReferences=[dict(kind='Job',uid=uid)])
+        state = dict(terminated=dict(exitCode=0, reason='Completed', startedAt=iso(900,PROM.timezone.utc).isoformat(), finishedAt=iso(finished,PROM.timezone.utc).isoformat()))
+        container=dict(name=entry['container'],containerID=entry['container_id'],imageID=entry['image_id'],restartCount=0,ready=False,state=state)
+        pod=dict(kind='Pod',metadata=meta,spec=dict(nodeName=entry['node']),status=dict(phase='Succeeded',podIP=entry['pod_ip'],containerStatuses=[container]))
+        items += [job,pod]
+    snapshot=directory/'terminal.json';snapshot.write_text(json.dumps(dict(captured_at=iso(end+10,PROM.timezone.utc).isoformat(),items=items)))
+    options=SimpleNamespace(start=start,end=end,phase='postrun',config=config,output=directory,run_config=run_config,observations=observations,observer_status=status_file,load_report=load,load_exit=load_exit,terminal_snapshot=snapshot)
+    return cfg, options
+
+
 class PrometheusTests(unittest.TestCase):
     def test_raw_identity_resources_and_business(self):
         entry, series, options = fixture()
@@ -161,47 +261,57 @@ class PrometheusTests(unittest.TestCase):
         finally:
             server.shutdown(); thread.join(); server.server_close()
 
-    def test_complete_offline_audit_binds_runner_observer_and_freeze(self):
-        original, _, base_options = fixture()
-        entries, all_series = [], []
-        for index in range(6):
-            entry, series, _ = fixture()
-            entry.update(pod='pod-'+str(index), uid='uid-'+str(index), role='weir' if index < 3 else ('load' if index == 5 else 'backend'))
-            entries.append(entry)
-            for labels, values in series:
-                if entry['role'] != 'weir' and labels['__name__'] in PROM.APPLICATION: continue
-                labels['pod'] = entry['pod']
-                if 'uid' in labels: labels['uid'] = entry['uid']
-                all_series.append(dict(metric=labels, values=values))
-        source = dict(url='http://unused', namespace='monitoring', pod='prom', uid='source-uid')
-        labels = dict(__name__='kube_pod_info', namespace='monitoring', pod='prom', uid='source-uid')
-        all_series.append(dict(metric=labels, values=[[1000, '1']]))
-        cfg = dict(run='weir-soak-test', namespace='owned', prometheus=source, containers=entries)
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            config = directory/'freeze'; config.write_text(json.dumps(cfg))
-            raw = json.dumps(dict(status='success', data=dict(resultType='matrix', result=all_series))).encode()
-            (directory/'raw.json').write_bytes(raw)
-            request = dict(file='raw.json', sha256=PROM.sha(raw), bytes=len(raw))
-            receipt = dict(state='collected', freeze_sha256=PROM.sha(config.read_bytes()), phase='postrun', start=1000, end=1120, requests=[request])
-            (directory/'receipt.json').write_text(json.dumps(receipt))
-            records = []
-            for point in (990, 1050, 1125):
-                pods = []
-                for entry in entries:
-                    status = dict(name=entry['container'], containerID=entry['container_id'], imageID=entry['image_id'], restartCount=0, ready=True)
-                    pods.append(dict(metadata=dict(name=entry['pod'], uid=entry['uid']), spec=dict(nodeName=entry['node']), status=dict(phase='Running', podIP=entry['pod_ip'], containerStatuses=[status])))
-                records.append(dict(utc=PROM.datetime.fromtimestamp(point, PROM.timezone.utc).isoformat(), pods=pods[:5], loadPods=pods[5:], job=dict(metadata=dict(name=cfg['run'], uid='job-id'), status=dict(active=1))))
-            observations = directory/'observations'; observations.write_text('\n'.join(json.dumps(r) for r in records))
-            status_file = directory/'status'; status_file.write_text('{"passed":true}')
-            start = dict(kind='start', run_id=cfg['run'], started_utc=PROM.datetime.fromtimestamp(1000, PROM.timezone.utc).isoformat(), duration_ns=120000000000, workers=6, cycles_per_second=5, max_p99_ns=500000000)
-            last = dict(kind='passed', run_id=cfg['run'], utc=PROM.datetime.fromtimestamp(1120, PROM.timezone.utc).isoformat(), elapsed_ns=120000000000, cycles=3600, failures=0, unknown=0, cycle_p99_upper_ns=20000000, interval_p99_upper_ns=20000000)
-            load = directory/'load'; load.write_text(json.dumps(start)+'\n'+json.dumps(last))
-            options = SimpleNamespace(start=1000, end=1120, phase='postrun', config=config, output=directory, observations=observations, observer_status=status_file, load_report=load)
-            self.assertEqual(PROM.audit(cfg, options)['state'], 'passed')
-            records[1]['pods'][0]['metadata']['uid'] = 'replacement'
-            observations.write_text('\n'.join(json.dumps(r) for r in records))
-            with self.assertRaisesRegex(ValueError, 'identity differs'): PROM.audit(cfg, options)
-            receipt['freeze_sha256'] = 'wrong'
-            (directory/'receipt.json').write_text(json.dumps(receipt))
-            with self.assertRaisesRegex(ValueError, 'frozen audit window'): PROM.audit(cfg, options)
+    def test_complete_audit_binds_all_bytes_and_frozen_duration(self):
+        for seconds in (120, 86400):
+            with self.subTest(seconds=seconds), tempfile.TemporaryDirectory() as temporary:
+                cfg, options = bundle(Path(temporary), seconds)
+                PROM.read_config(options.config)
+                result = PROM.audit(cfg, options)
+                self.assertEqual(result['state'], 'passed')
+                self.assertEqual(result['lifecycle']['required_duration_ns'], seconds * 10**9)
+                self.assertEqual(result['lifecycle']['actual_elapsed_ns'], seconds * 10**9)
+                for path in (options.config, options.run_config, options.load_report, options.observations, options.observer_status, options.load_exit, options.terminal_snapshot, options.output/'raw.json', options.output/'receipt.json'):
+                    self.assertEqual(result['files'][str(path)], dict(sha256=PROM.sha(path.read_bytes()), bytes=path.stat().st_size))
+
+    def test_complete_bundle_rejects_review_reproductions_and_invalid_gates(self):
+        cases = ('wrong-settings-failed-tail', 'failed-observer-tail', 'wrong-status', 'nonzero-load-exit', 'nonzero-container-exit', 'still-active', 'observer-active', 'shorter-than-frozen', 'nan', 'boolean-count', 'negative-count', 'missing-field', 'wrong-freeze', 'truncated-jsonl', 'inconsistent-time', 'failed-middle', 'missing-snapshot')
+        for mode in cases:
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                cfg, options = bundle(Path(temporary))
+                records = [json.loads(line) for line in options.load_report.read_text().splitlines()]
+                if mode == 'wrong-settings-failed-tail':
+                    observed = [json.loads(line) for line in options.observations.read_text().splitlines()]
+                    observed[0]['runID'] = 'weir-soak-other'
+                    observed.append(dict(passed=False,error='observer deadline reached'))
+                    options.observations.write_text(''.join(json.dumps(r)+'\n' for r in observed))
+                elif mode == 'failed-observer-tail':
+                    with options.observations.open('a') as output: output.write('{"passed":false,"error":"failed"}\n')
+                elif mode == 'wrong-status':
+                    status=json.loads(options.observer_status.read_text());status['runID']='weir-soak-other';options.observer_status.write_text(json.dumps(status))
+                elif mode == 'nonzero-load-exit': options.load_exit.write_text('{"exit_code":1}')
+                elif mode in ('nonzero-container-exit','still-active','observer-active'):
+                    snapshot=json.loads(options.terminal_snapshot.read_text())
+                    if mode=='nonzero-container-exit': snapshot['items'][1]['status']['containerStatuses'][0]['state']['terminated']['exitCode']=1
+                    else: snapshot['items'][2 if mode=='observer-active' else 0]['status']=dict(active=1)
+                    options.terminal_snapshot.write_text(json.dumps(snapshot))
+                elif mode == 'shorter-than-frozen':
+                    run=json.loads(options.run_config.read_text());run.update(duration='24h',observerDuration='24h10m')
+                    canonical=json.dumps(run,sort_keys=True,separators=(',',':')).encode();options.run_config.write_bytes(canonical)
+                    cfg['run_config_sha256']=PROM.sha(canonical);options.config.write_text(json.dumps(cfg))
+                    receipt=json.loads((options.output/'receipt.json').read_text());receipt['freeze_sha256']=PROM.sha(options.config.read_bytes());(options.output/'receipt.json').write_text(json.dumps(receipt))
+                    status=json.loads(options.observer_status.read_text());status['runConfigSHA256']=cfg['run_config_sha256'];options.observer_status.write_text(json.dumps(status))
+                    observed=[json.loads(line) for line in options.observations.read_text().splitlines()];observed[0].update(runConfigSHA256=cfg['run_config_sha256'],loadDuration=86400*10**9,duration=87000*10**9)
+                    options.observations.write_text(''.join(json.dumps(row)+'\n' for row in observed))
+                elif mode == 'nan':
+                    for key in ('elapsed_ns','cycles','cycle_p99_upper_ns','interval_p99_upper_ns'):records[-1][key]=float('nan')
+                elif mode == 'boolean-count': records[-1]['cycles']=True
+                elif mode == 'negative-count': records[-1]['cycle_p99_upper_ns']=-1
+                elif mode == 'missing-field': del records[-1]['unknown']
+                elif mode == 'wrong-freeze': options.run_config.write_text('{}')
+                elif mode == 'inconsistent-time': records[-1]['elapsed_ns']=200000000000
+                elif mode == 'failed-middle': records.insert(8,dict(kind='observer_failure',error='failed'))
+                elif mode == 'missing-snapshot': options.terminal_snapshot=None
+                options.load_report.write_text(''.join(json.dumps(r)+'\n' for r in records))
+                if mode == 'truncated-jsonl': options.load_report.write_text(options.load_report.read_text().rstrip())
+                with self.assertRaises((ValueError,KeyError,TypeError)):
+                    PROM.audit(cfg, options)

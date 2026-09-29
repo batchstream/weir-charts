@@ -105,5 +105,16 @@
       "cpu_limit": 2,
       "memory_limit_bytes": 1073741824
     }
-  ]
+  ],
+  "load_job_uid": "REPLACE_WITH_WAITING_LOAD_JOB_UID",
+  "observer": {
+    "job_uid": "REPLACE_WITH_OBSERVER_JOB_UID",
+    "pod": "REPLACE_WITH_OBSERVER_POD_NAME",
+    "uid": "REPLACE",
+    "container": "observer",
+    "container_id": "containerd://REPLACE",
+    "image_id": "REPLACE",
+    "node": "REPLACE",
+    "pod_ip": "REPLACE"
+  }
 }

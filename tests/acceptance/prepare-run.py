@@ -85,7 +85,7 @@ done
 echo "observer startup deadline exceeded"
 exit 1
 '''
-    observer_args = ['-namespace', namespace, '-job', run, '-release', cfg.get('release', 'weir'), '-output', observation,
+    observer_args = ['-run-config-sha256', config_sha, '-namespace', namespace, '-job', run, '-release', cfg.get('release', 'weir'), '-output', observation,
                      '-interval', cfg.get('interval', '1m'), '-duration', cfg['observerDuration'],
                      '-report', report, '-exit-status', exit_status, '-run-id', run, '-load-duration', cfg['duration']]
     result = {'resources': {'apiVersion': 'v1', 'kind': 'List', 'items': resources}}

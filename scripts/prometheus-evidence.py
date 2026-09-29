@@ -46,12 +46,51 @@ def save_json(path, value):
 
 
 def timestamp(value):
-    return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    if not isinstance(value, str):
+        raise ValueError('timestamp must be an explicit string')
+    parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+    if parsed.tzinfo is None:
+        raise ValueError('timestamp must include timezone')
+    return parsed.timestamp()
+
+
+def reject_constant(value):
+    raise ValueError('nonfinite JSON number: ' + value)
+
+
+def integer(value, field):
+    if type(value) is not int or value < 0:
+        raise ValueError('expected nonnegative integer: ' + field)
+    return value
+
+
+def duration_ns(value):
+    match = re.fullmatch(r'(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?', value)
+    if not match or not any(match.groups()):
+        raise ValueError('frozen duration must use whole h/m/s units')
+    hours, minutes, seconds = (int(v or 0) for v in match.groups())
+    duration = (hours * 3600 + minutes * 60 + seconds) * 1000000000
+    if not 0 < duration <= 25 * 3600 * 1000000000:
+        raise ValueError('frozen duration outside acceptance bound')
+    return duration
+
+
+def read_evidence(path, files, lines=False):
+    if path is None:
+        raise ValueError('required evidence file missing')
+    raw = path.read_bytes()
+    files[str(path)] = {'sha256': sha(raw), 'bytes': len(raw)}
+    if lines:
+        if not raw.endswith(b'\n'):
+            raise ValueError('incomplete JSONL final line')
+        return [json.loads(line, parse_constant=reject_constant) for line in raw.splitlines()]
+    return json.loads(raw, parse_constant=reject_constant)
+
 
 
 def read_config(path):
     raw = path.read_bytes()
-    cfg = json.loads(raw)
+    cfg = json.loads(raw, parse_constant=reject_constant)
     if not re.fullmatch(r'weir-soak-[a-z0-9-]+', cfg['run']):
         raise ValueError('invalid run identity')
     for field in ('run_config_sha256', 'tool_sha256'):
@@ -65,6 +104,11 @@ def read_config(path):
         raise ValueError('Prometheus URL must be an explicit credential-free HTTP endpoint')
     if not source['uid'] or not source['namespace'] or not source['pod'] or not cfg['namespace_uid'] or not cfg['owner']:
         raise ValueError('source/namespace identity missing')
+    if not cfg['load_job_uid'] or not cfg['observer']['job_uid']:
+        raise ValueError('frozen Job identity missing')
+    for field in ('pod', 'uid', 'node', 'pod_ip', 'container', 'container_id', 'image_id'):
+        if not cfg['observer'][field]:
+            raise ValueError('frozen observer identity missing')
     entries = cfg['containers']
     if len(entries) != 6 or len({e['uid'] for e in entries}) != 6:
         raise ValueError('freeze exactly three Weir, two backend and one waiting load Pod')
@@ -77,7 +121,8 @@ def read_config(path):
         cid = e['container_id'].split('://')[-1]
         if cid not in e['cadvisor_id'] or e['uid'].replace('-', '_') not in e['cadvisor_id'].replace('-', '_'):
             raise ValueError('cgroup does not bind Pod UID and container ID')
-        if e['cpu_limit'] <= 0 or e['memory_limit_bytes'] <= 0:
+        integer(e['memory_limit_bytes'], 'memory limit')
+        if type(e['cpu_limit']) not in (int, float) or not math.isfinite(e['cpu_limit']) or e['cpu_limit'] <= 0 or e['memory_limit_bytes'] <= 0:
             raise ValueError('freeze positive resource limits from PodSpec')
         if e['role'] == 'weir' and (e['instance'] != e['pod_ip'] + ':7449' or e['stores'] != ['mongo', 'search']):
             raise ValueError('unexpected Weir endpoint or stores')
@@ -138,13 +183,15 @@ def collect(cfg, options):
         save_json(output / 'receipt.json', receipt)
 
 
-def merge_raw(directory, receipt):
+def merge_raw(directory, receipt, files=None):
     merged = {}
     for request in receipt['requests']:
         body = (directory / request['file']).read_bytes()
         if sha(body) != request['sha256'] or len(body) != request['bytes']:
             raise ValueError('raw response checksum mismatch')
-        result = json.loads(body)
+        if files is not None:
+            files[str(directory / request['file'])] = {'sha256': sha(body), 'bytes': len(body)}
+        result = json.loads(body, parse_constant=reject_constant)
         if result.get('status') != 'success' or result.get('warnings') or result.get('infos') or result['data']['resultType'] != 'matrix':
             raise ValueError('incomplete or non-matrix raw response')
         for series in result['data']['result']:
@@ -332,69 +379,207 @@ def audit_application(entry, series, options):
     return summaries
 
 
-def verify_lifecycle(cfg, options):
+def verify_run_config(cfg, options, files):
+    run = read_evidence(getattr(options, 'run_config', None), files)
+    canonical = json.dumps(run, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+    if sha(canonical) != cfg['run_config_sha256']:
+        raise ValueError('canonical run configuration checksum differs')
+    for field in ('run', 'namespace', 'owner'):
+        if run[field] != cfg[field]:
+            raise ValueError('run configuration identity differs: ' + field)
+    if run['resourceEvidenceSource'] != 'prometheus' or run['evidenceToolSHA256'] != cfg['tool_sha256'] or run['prometheusSourceUID'] != cfg['prometheus']['uid']:
+        raise ValueError('run evidence source differs')
+    duration_ns(run['duration'])
+    if duration_ns(run['observerDuration']) < duration_ns(run['duration']) or duration_ns(run['interval']) > 60000000000:
+        raise ValueError('invalid frozen observation duration/interval')
+    return run
+
+
+def verify_pod(pod, entry, terminal=False):
+    if pod['metadata']['name'] != entry['pod'] or pod['metadata']['uid'] != entry['uid'] or pod['spec']['nodeName'] != entry['node'] or pod['status']['podIP'] != entry['pod_ip']:
+        raise ValueError('Pod identity differs from freeze')
+    statuses = pod['status']['containerStatuses']
+    if len(statuses) != 1:
+        raise ValueError('unexpected container identity count')
+    container = statuses[0]
+    if container['name'] != entry['container'] or container['containerID'] != entry['container_id'] or container['imageID'] != entry['image_id'] or integer(container['restartCount'], 'restart count') != 0:
+        raise ValueError('container identity/restart differs')
+    if terminal or pod['status']['phase'] == 'Succeeded':
+        state = container['state']['terminated']
+        if pod['status']['phase'] != 'Succeeded' or integer(state['exitCode'], 'container exit') != 0 or state['reason'] != 'Completed':
+            raise ValueError('container lacks successful terminal evidence')
+        finished = timestamp(state['finishedAt'])
+        if timestamp(state['startedAt']) > finished:
+            raise ValueError('container termination time is invalid')
+        return finished
+    if pod['status']['phase'] != 'Running' or container['ready'] is not True:
+        raise ValueError('Pod lifecycle/readiness failed')
+    return None
+
+
+def verify_lifecycle(cfg, options, files, run):
     if options.phase == 'preflight':
-        return
-    if not options.observations or not options.observer_status or not options.load_report:
-        raise ValueError('postrun needs complete observer evidence')
-    if json.loads(options.observer_status.read_text()).get('passed') is not True:
+        return {'required_duration_ns': duration_ns(run['duration'])}
+    status = read_evidence(getattr(options, 'observer_status', None), files)
+    load = read_evidence(getattr(options, 'load_report', None), files, True)
+    observed = read_evidence(getattr(options, 'observations', None), files, True)
+    exit_status = read_evidence(getattr(options, 'load_exit', None), files)
+    terminal = read_evidence(getattr(options, 'terminal_snapshot', None), files)
+    required = duration_ns(run['duration'])
+    observer_duration = duration_ns(run['observerDuration'])
+    interval = duration_ns(run['interval'])
+    if integer(exit_status['exit_code'], 'load exit') != 0:
+        raise ValueError('load exit is not successful')
+    if status.get('passed') is not True or status.get('error'):
         raise ValueError('observer did not pass')
-    load = [json.loads(line) for line in options.load_report.read_text().splitlines()]
+    binding = {'runID': cfg['run'], 'namespace': cfg['namespace'], 'job': cfg['run'], 'runConfigSHA256': cfg['run_config_sha256']}
+    if any(status.get(key) != value for key, value in binding.items()):
+        raise ValueError('observer status run/config differs')
+    completed = timestamp(status['completed_at'])
+    if len(load) < 2 or load[0].get('kind') != 'start' or load[-1].get('kind') != 'passed':
+        raise ValueError('runner lacks complete start/passed report')
     first, last = load[0], load[-1]
-    if first.get('kind') != 'start' or last.get('kind') != 'passed' or first.get('run_id') != cfg['run'] or last.get('run_id') != cfg['run']:
-        raise ValueError('runner does not prove frozen run passed')
-    if abs(timestamp(first['started_utc']) - options.start) > 0.001 or abs(timestamp(last['utc']) - options.end) > 0.001:
-        raise ValueError('Prom window must equal actual runner start/end')
-    if last['elapsed_ns'] < first['duration_ns'] or last['failures'] or last['unknown'] or first['workers'] != 6 or first['cycles_per_second'] != 5 or first['max_p99_ns'] != 500000000:
-        raise ValueError('runner duration/error/load gates failed')
-    if last['cycles'] < first['duration_ns'] / 1e9 * 30 * .98:
-        raise ValueError('runner coverage below 98 percent')
-    for progress in load:
-        if progress.get('kind') in ('progress', 'passed') and (progress['cycle_p99_upper_ns'] > 500000000 or progress['interval_p99_upper_ns'] > 500000000 or progress['failures'] or progress['unknown']):
-            raise ValueError('runner interval gate failed')
-    baseline = None
-    times = []
-    job_uid = None
-    for line in options.observations.read_text().splitlines():
-        record = json.loads(line)
-        if 'pods' not in record:
+    expected_start = {'run_id': cfg['run'], 'duration_ns': required, 'workers': 6, 'cycles_per_second': 5, 'max_p99_ns': 500000000,
+                      'server_revision': run['serverRevision'], 'image_digest': run['imageDigest'], 'sdk_revision': run['sdkRevision'], 'chart_version': run['chartVersion']}
+    for field, expected in expected_start.items():
+        if type(expected) is int:
+            integer(first[field], field)
+        if first[field] != expected:
+            raise ValueError('runner differs from frozen configuration: ' + field)
+    start, end = timestamp(first['started_utc']), timestamp(last['utc'])
+    if abs(start - options.start) > .001 or abs(end - options.end) > .001 or end <= start:
+        raise ValueError('Prom window must equal complete actual runner start/end')
+    targets = run['targets']
+    if first['targets'] != targets or len(targets) != 3 or set(targets) != {e['pod_ip'] + ':7447' for e in cfg['containers'] if e['role'] == 'weir'}:
+        raise ValueError('runner targets differ from frozen Pods')
+    previous_elapsed, previous_cycles, previous_time = -1, -1, start
+    owned, cleaned = set(), set()
+    progress_count = 0
+    for index, record in enumerate(load[1:], 1):
+        kind = record.get('kind')
+        if record.get('error') or record.get('unknown') not in (None, 0, False):
+            raise ValueError('runner error event present')
+        if kind in ('owned', 'cleaned'):
+            worker = integer(record['worker'], 'worker')
+            expected_backend = 'mongo' if worker % 2 == 0 else 'search'
+            if worker >= 6 or record['target'] != targets[worker % 3] or record['backend'] != expected_backend:
+                raise ValueError('worker event differs from frozen target')
+            destination = owned if kind == 'owned' else cleaned
+            if worker in destination or (kind == 'cleaned' and worker not in owned):
+                raise ValueError('worker ownership/cleanup sequence is invalid')
+            destination.add(worker)
+            integer(record['sequence'], 'sequence')
+            integer(record['duration_ns'], 'operation duration')
             continue
-        if job_uid is None:
-            job_uid = record['job']['metadata']['uid']
-        if not job_uid or record['job']['metadata']['uid'] != job_uid or record['job']['status'].get('failed', 0):
+        if kind not in ('progress', 'passed') or (kind == 'passed') != (index == len(load) - 1) or record.get('run_id') != cfg['run']:
+            raise ValueError('unexpected runner record or failure tail')
+        for field in ('elapsed_ns', 'cycles', 'verified_mutations', 'verified_reads', 'stream_checks', 'failures', 'unknown', 'cycle_p99_upper_ns', 'interval_p99_upper_ns', 'cycle_overflow'):
+            integer(record[field], field)
+        if record['failures'] or record['unknown'] or record['cycle_p99_upper_ns'] > 500000000 or record['interval_p99_upper_ns'] > 500000000:
+            raise ValueError('runner interval gate failed')
+        histogram = record['cycle_histogram']
+        if len(histogram) != 12 or sum(integer(value, 'histogram count') for value in histogram) + record['cycle_overflow'] != record['cycles']:
+            raise ValueError('runner histogram/count evidence differs')
+        if record['verified_mutations'] != record['cycles'] * 2 or record['verified_reads'] != record['cycles'] * 2:
+            raise ValueError('runner confirmation counts differ')
+        utc = timestamp(record['utc'])
+        elapsed = record['elapsed_ns'] / 1e9
+        if record['elapsed_ns'] < previous_elapsed or record['cycles'] < previous_cycles or utc < previous_time or abs((utc - start) - elapsed) > 1:
+            raise ValueError('runner UTC/monotonic time or counters are inconsistent')
+        if utc - previous_time > GAP:
+            raise ValueError('runner minute report missing')
+        previous_elapsed, previous_cycles, previous_time = record['elapsed_ns'], record['cycles'], utc
+        if kind == 'progress':
+            progress_count += 1
+    if owned != set(range(6)) or cleaned != owned:
+        raise ValueError('runner lacks complete owned/cleaned worker evidence')
+    if last['elapsed_ns'] < required or end - start < required / 1e9 - .001 or last['elapsed_ns'] > observer_duration:
+        raise ValueError('runner did not complete frozen duration')
+    if last['cycles'] * 100 < required // 1000000000 * 30 * 98:
+        raise ValueError('runner coverage below frozen 98 percent target')
+    if len(observed) < 2:
+        raise ValueError('observer settings or observations missing')
+    settings = observed[0]
+    binding.update(loadDuration=required, interval=interval, duration=observer_duration, replicas=3, release=run.get('release', 'weir'))
+    for field, expected in binding.items():
+        if type(expected) is int:
+            integer(settings[field], field)
+        if settings.get(field) != expected:
+            raise ValueError('observer settings differ: ' + field)
+    times = []
+    for record in observed[1:]:
+        if set(record) != {'utc', 'pods', 'loadPods', 'job'}:
+            raise ValueError('unknown observer record or failed tail')
+        job = record['job']
+        if job['metadata']['uid'] != cfg['load_job_uid'] or job['metadata']['name'] != cfg['run'] or integer(job['status'].get('failed', 0), 'Job failed'):
             raise ValueError('observer Job identity/failure differs')
-        observed = timestamp(record['utc'])
-        times.append(observed)
+        times.append(timestamp(record['utc']))
         pods = record['pods'] + record['loadPods']
-        if baseline is None:
-            baseline = record
+        if len(pods) != 6 or len(record['loadPods']) != 1:
+            raise ValueError('observer Pod set differs')
         for entry in cfg['containers']:
             matching = [p for p in pods if p['metadata']['name'] == entry['pod']]
             if len(matching) != 1:
                 raise ValueError('observer lacks frozen Pod')
-            pod = matching[0]
-            if pod['metadata']['uid'] != entry['uid'] or pod['spec']['nodeName'] != entry['node'] or pod['status']['podIP'] != entry['pod_ip']:
-                raise ValueError('observer Pod identity differs')
-            if pod['status']['phase'] != 'Running' and not (entry['role'] == 'load' and pod['status']['phase'] == 'Succeeded'):
-                raise ValueError('observer Pod lifecycle failed')
-            containers = [c for c in pod['status']['containerStatuses'] if c['name'] == entry['container']]
-            if len(containers) != 1 or containers[0]['containerID'] != entry['container_id'] or containers[0]['imageID'] != entry['image_id'] or containers[0]['restartCount'] != 0:
-                raise ValueError('observer container identity/restart differs')
-            if entry['role'] != 'load' and not containers[0]['ready']:
-                raise ValueError('observer service container unready')
-    if baseline and baseline['job']['metadata']['name'] != cfg['run']:
-        raise ValueError('observer Job differs from run')
-    if not times or times[0] > options.start or times[-1] < options.end or any(b <= a or b - a > GAP for a, b in zip(times, times[1:])):
-        raise ValueError('observer does not cover full run with fixed identities')
-
+            if entry['role'] != 'load' and matching[0]['status']['phase'] != 'Running':
+                raise ValueError('service Pod left running lifecycle')
+            finished = verify_pod(matching[0], entry)
+            if finished is not None and (finished < end - 1 or finished > times[-1] + 1):
+                raise ValueError('observed load termination time differs')
+    if times[0] > start or times[-1] < end or any(b <= a or b - a > GAP for a, b in zip(times, times[1:])):
+        raise ValueError('observer does not cover complete run')
+    if not times[-1] <= completed <= times[0] + observer_duration / 1e9:
+        raise ValueError('observer completion time differs')
+    final = observed[-1]
+    if integer(final['job']['status'].get('succeeded', 0), 'Job succeeded') != 1 or integer(final['job']['status'].get('active', 0), 'Job active') != 0:
+        raise ValueError('final observed load Job is not successful')
+    load_entry = next(e for e in cfg['containers'] if e['role'] == 'load')
+    load_finished = verify_pod(final['loadPods'][0], load_entry, True)
+    if load_finished < end - 1:
+        raise ValueError('load exited before its terminal report')
+    captured = timestamp(terminal['captured_at'])
+    items = terminal['items']
+    if len(items) != 4:
+        raise ValueError('need exact independent two Job/two Pod terminal snapshot')
+    for job_name, uid, entry, after in ((cfg['run'], cfg['load_job_uid'], load_entry, end), (cfg['run'] + '-observer', cfg['observer']['job_uid'], cfg['observer'], completed)):
+        matches = [item for item in items if item['kind'] == 'Job' and item['metadata']['name'] == job_name]
+        pod_matches = [item for item in items if item['kind'] == 'Pod' and item['metadata']['name'] == entry['pod']]
+        if len(matches) != 1 or len(pod_matches) != 1:
+            raise ValueError('missing terminal Job or Pod')
+        job, pod = matches[0], pod_matches[0]
+        for item in (job, pod):
+            if item['metadata']['namespace'] != cfg['namespace'] or item['metadata']['labels'].get('weir.batchstream.io/owner') != cfg['owner']:
+                raise ValueError('terminal snapshot outside frozen ownership')
+        if job['metadata']['uid'] != uid or not any(ref['uid'] == uid and ref['kind'] == 'Job' for ref in pod['metadata']['ownerReferences']):
+            raise ValueError('terminal snapshot Job ownership differs')
+        state = job['status']
+        if integer(state.get('succeeded', 0), 'Job succeeded') != 1 or integer(state.get('failed', 0), 'Job failed') or integer(state.get('active', 0), 'Job active'):
+            raise ValueError('terminal Job did not succeed')
+        if not any(c['type'] == 'Complete' and c['status'] == 'True' for c in state['conditions']) or any(c['type'] == 'Failed' and c['status'] == 'True' for c in state['conditions']):
+            raise ValueError('terminal Job lacks Complete condition')
+        finished = verify_pod(pod, entry, True)
+        job_completed = timestamp(state['completionTime'])
+        if finished < after - 1 or job_completed < finished - 1 or captured < max(finished, job_completed, completed):
+            raise ValueError('terminal snapshot chronology differs')
+    result = {'required_duration_ns': required, 'actual_elapsed_ns': last['elapsed_ns'], 'actual_start': start, 'actual_end': end,
+              'run_config_sha256': cfg['run_config_sha256'], 'observer_completed_at': completed, 'terminal_captured_at': captured,
+              'load_job_uid': cfg['load_job_uid'], 'observer_job_uid': cfg['observer']['job_uid'], 'progress_records': progress_count}
+    return result
 
 def audit(cfg, options):
-    receipt = json.loads((options.output / 'receipt.json').read_text())
+    if any(type(v) not in (int, float) or not math.isfinite(v) for v in (options.start, options.end)) or not options.start < options.end:
+        raise ValueError('invalid finite audit start/end')
+    files = {}
+    frozen = read_evidence(options.config, files)
+    if frozen != cfg:
+        raise ValueError('audit config differs from frozen file')
+    run = verify_run_config(cfg, options, files)
+    receipt = read_evidence(options.output / 'receipt.json', files)
     if receipt.get('state') != 'collected':
         raise ValueError('Prometheus evidence pending retrieval, not passed')
-    if receipt['freeze_sha256'] != sha(options.config.read_bytes()) or receipt['phase'] != options.phase or receipt['start'] != options.start or receipt['end'] != options.end:
+    if receipt['freeze_sha256'] != files[str(options.config)]['sha256'] or receipt['phase'] != options.phase or receipt['start'] != options.start or receipt['end'] != options.end:
         raise ValueError('collection does not match frozen audit window')
-    series = merge_raw(options.output, receipt)
+    series = merge_raw(options.output, receipt, files)
     source = cfg['prometheus']
     source_series = [(labels, values) for labels, values in series if labels.get('namespace') == source['namespace'] and labels.get('pod') == source['pod']]
     if not source_series or any(labels.get('uid') != source['uid'] for labels, _ in source_series):
@@ -402,7 +587,7 @@ def audit(cfg, options):
     for labels, _ in series:
         if labels.get('namespace', cfg['namespace']) != cfg['namespace'] and not (labels.get('namespace') == source['namespace'] and labels.get('pod') == source['pod']):
             raise ValueError('unexpected namespace')
-    verify_lifecycle(cfg, options)
+    lifecycle = verify_lifecycle(cfg, options, files, run)
     results = {}
     for entry in cfg['containers']:
         result = {'resources': audit_container(entry, series, options)}
@@ -410,8 +595,8 @@ def audit(cfg, options):
             result['application'] = audit_application(entry, series, options)
         results[entry['uid']] = result
     result = {'state': 'passed', 'phase': options.phase, 'run': cfg['run'], 'freeze_sha256': receipt['freeze_sha256'],
-              'start': options.start, 'end': options.end, 'containers': results,
-              'scope': 'Prometheus evidence only; load, observer and independent trend review must also pass'}
+              'start': options.start, 'end': options.end, 'containers': results, 'lifecycle': lifecycle, 'files': files,
+              'scope': 'Frozen-duration load, terminal lifecycle and Prometheus evidence verified; independent trend review still required'}
     return result
 
 
@@ -423,7 +608,10 @@ def main():
     parser.add_argument('--start', type=timestamp, required=True)
     parser.add_argument('--end', type=timestamp, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--run-config', type=Path, required=True)
     parser.add_argument('--load-report', type=Path)
+    parser.add_argument('--load-exit', type=Path)
+    parser.add_argument('--terminal-snapshot', type=Path)
     parser.add_argument('--observations', type=Path)
     parser.add_argument('--observer-status', type=Path)
     options = parser.parse_args()
@@ -439,7 +627,7 @@ def main():
         result = audit(cfg, options)
         if options.phase == 'preflight' and time.time() - options.end > AGE:
             raise ValueError('preflight expired before publication')
-    except (ValueError, KeyError, TypeError) as exc:
+    except (ValueError, KeyError, TypeError, IndexError, OSError) as exc:
         result = {'state': 'failed', 'run': cfg['run'], 'error': str(exc)}
         save_json(options.output / 'audit.json', result)
         print(json.dumps(result))
