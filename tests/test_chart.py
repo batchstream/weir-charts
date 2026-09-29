@@ -71,6 +71,18 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(resources["PodDisruptionBudget"]["spec"]["maxUnavailable"], 1)
         self.assertEqual([p["name"] for p in resources["Service"]["spec"]["ports"]], ["grpc", "peer"])
 
+    def test_metrics_requires_listener_opt_in_and_selected_scrapers(self):
+        rule = {"from": [{"podSelector": {"matchLabels": {"app": "prometheus"}}}], "ports": [{"protocol": "TCP", "port": 7449}]}
+        values = {"metrics": {"enabled": True, "ingress": [rule]}, "networkPolicy": {"ingress": []}}
+        resources = render(values)
+        self.assertEqual(resources["NetworkPolicy"]["spec"]["ingress"], [rule])
+        ports = resources["Deployment"]["spec"]["template"]["spec"]["containers"][0]["ports"]
+        self.assertIn({"name": "metrics", "containerPort": 7449}, ports)
+        values["config"] = {"existingSecret": "", "data": {"diagnostics": "127.0.0.1:7449"}}
+        self.assertNotEqual(render(values, success=False).returncode, 0)
+        values["config"]["data"] = {"diagnostics": "0.0.0.0:7449", "diagnostics_allow_intranet": True}
+        self.assertIn("ConfigMap", render(values))
+
     def test_recreate_has_no_incompatible_rolling_settings(self):
         strategy = render({"strategy": {"type": "Recreate"}})["Deployment"]["spec"]["strategy"]
         self.assertEqual(strategy, {"type": "Recreate"})
