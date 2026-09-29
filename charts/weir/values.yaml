@@ -3,8 +3,8 @@ nameOverride: ""
 fullnameOverride: ""
 image:
   repository: ghcr.io/batchstream/weir
-  tag: "278264db2f9617ad583c6b56d19b8aaf5943e771"
-  digest: sha256:aee0c24fd5a0edbe81d335522e2741b34ca267f8246c893e15d6ef0097c18bb4
+  tag: "v0.1.0"
+  digest: sha256:93810bbfb9eb720d0d42296a3e856f60e1d94bdb22279555ad94a8fc79c0f7df
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 # Provision this Secret separately; never put backend credentials in Helm values.
