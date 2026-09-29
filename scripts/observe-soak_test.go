@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,14 @@ func baselineRecord() record {
 	jobMeta := metadata{UID: "job-id"}
 	runningStatus := jobStatus{Active: 1}
 	runningJob := job{Metadata: jobMeta, Status: runningStatus}
-	result := record{Pods: []pod{first, second, third}, LoadPods: []pod{load}, Job: runningJob}
+	result := record{UTC: time.Now().UTC(), Pods: []pod{first, second, third}, LoadPods: []pod{load}, Job: runningJob}
+	usage := usageList{}
+	for _, item := range append([]pod{load}, result.Pods...) {
+		measurement := containerUsage{Name: "weir", Usage: map[string]string{"cpu": "1m", "memory": "1Mi"}}
+		metric := podUsage{Metadata: item.Metadata, Timestamp: result.UTC, Containers: []containerUsage{measurement}}
+		usage.Items = append(usage.Items, metric)
+	}
+	result.Usage, _ = json.Marshal(usage)
 	return result
 }
 
@@ -122,5 +130,29 @@ func TestObserverCannotReplaceExistingStatus(t *testing.T) {
 	actual, err := os.ReadFile(file)
 	if err != nil || string(actual) != string(original) {
 		t.Fatal("changed existing evidence")
+	}
+}
+
+func TestObserverRequiresFreshCompleteUsage(t *testing.T) {
+	for _, mode := range []string{"missing-pod", "missing-memory", "stale"} {
+		t.Run(mode, func(t *testing.T) {
+			current := baselineRecord()
+			var usage usageList
+			if err := json.Unmarshal(current.Usage, &usage); err != nil {
+				t.Fatal(err)
+			}
+			switch mode {
+			case "missing-pod":
+				usage.Items = usage.Items[:1]
+			case "missing-memory":
+				delete(usage.Items[0].Containers[0].Usage, "memory")
+			case "stale":
+				usage.Items[0].Timestamp = current.UTC.Add(-3 * time.Minute)
+			}
+			current.Usage, _ = json.Marshal(usage)
+			if err := validateUsage(current); err == nil {
+				t.Fatal("accepted incomplete usage evidence")
+			}
+		})
 	}
 }

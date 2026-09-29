@@ -58,6 +58,38 @@ failed Helm revision and startup failures remain in the local receipt/history;
 removing that artificial scheduling restriction and fixing only the test backend
 produced the successful revision. These failures are not rewritten as passes.
 
+## Stable release and persistent paired validation
+
+The namespace upgraded to Weir v0.1.0, source
+`be155e053f94cc7a6f3e8ce524f639b46f75be16`, image digest
+`sha256:93810bbfb9eb720d0d42296a3e856f60e1d94bdb22279555ad94a8fc79c0f7df`.
+All three replicas became Ready and the metrics Service was scraped successfully.
+The SDK v0.1.0 commit `327974c756da1c6e7188fc7db53916cd36d45605` passed the
+real five-RPC lifecycle on both backends (Mongo 4.13 s, Search 4.20 s, race test
+process 10.293 s).
+
+An initial paired fixture used a run ID without the SDK-required `weir-soak-`
+prefix. The runner rejected it before any RPC, and the observer recorded failure.
+The renderer now rejects that input before creating a Job; the failed reports
+and terminal statuses remain preserved.
+
+The corrected Service-based paired run completed 5,394 cycles in 180.056798 s,
+with cycle p99 upper bound 50 ms and zero errors/UNKNOWN. The load exited zero,
+and the independent observer validated the durable final report and recorded
+success. Every sample retained CPU/memory data and fixed Pod/container identities.
+However, its six Service connections delivered business traffic to only two of
+three replicas: the third Pod's completion counter did not increase. This proves
+the paired handshake/recording and Service behavior, **not** three-Pod load coverage.
+Final three-Pod qualification uses SDK v0.1.1's fixed-target runner, six workers,
+and one Mongo plus one Search worker on each of three frozen Pod IPs. The original
+Service-based evidence remains separate.
+
+The results PVC survived ordinary removal of its original node. After attachment
+on another worker, the initial calibration JSONL SHA256 still matched its prior
+local export: `dca2992ca10e2c90ae8aa5f5b4550f8b8d3ecb80c69678df0f4b4d2cad9b48df`.
+This establishes persistence of the acceptance record across that event, not
+production backend durability.
+
 ## Network boundary and remaining evidence
 
 The AWS VPC CNI agent was installed with enforcement disabled. A controller-owned
@@ -68,8 +100,7 @@ The user explicitly declined modifying shared CNI for this task; this gate remai
 is not isolation. The task's policies now deny ingress by default and separately
 allow selected clients/Weir to the necessary ports, ready for an enforced retest.
 
-The final stable product image must replace the initial image before final SDK,
-upgrade, and metrics validation. The release OCI archive must be fetched and
+The release OCI archive must be fetched and
 installed from its published location. The 24-hour load run starts only after the
 final versions and configuration are fixed and fault/rollout checks have ended.
 A zero-retry Job writes JSONL and exit status to a dedicated 1 GiB gp3 result PVC.

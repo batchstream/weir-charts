@@ -68,6 +68,19 @@ type record struct {
 	Usage    json.RawMessage   `json:"usage"`
 	Metrics  map[string]string `json:"weirMetrics"`
 }
+type containerUsage struct {
+	Name  string            `json:"name"`
+	Usage map[string]string `json:"usage"`
+}
+type podUsage struct {
+	Metadata   metadata         `json:"metadata"`
+	Timestamp  time.Time        `json:"timestamp"`
+	Containers []containerUsage `json:"containers"`
+}
+type usageList struct {
+	Items []podUsage `json:"items"`
+}
+
 type settings struct {
 	Namespace      string        `json:"namespace"`
 	Job            string        `json:"job"`
@@ -221,6 +234,41 @@ func validate(current, baseline record, replicas int) error {
 	return nil
 }
 
+func validateUsage(current record) error {
+	var usage usageList
+	if err := json.Unmarshal(current.Usage, &usage); err != nil {
+		return err
+	}
+	byName := make(map[string]podUsage)
+	for _, item := range usage.Items {
+		byName[item.Metadata.Name] = item
+	}
+	expected := append([]pod(nil), current.Pods...)
+	for _, item := range current.LoadPods {
+		if item.Status.Phase == "Running" {
+			expected = append(expected, item)
+		}
+	}
+	for _, item := range expected {
+		metric, ok := byName[item.Metadata.Name]
+		age := current.UTC.Sub(metric.Timestamp)
+		if !ok || age > 2*time.Minute || age < -30*time.Second || len(metric.Containers) != len(item.Status.Containers) {
+			return fmt.Errorf("missing or stale Pod usage: %s", item.Metadata.Name)
+		}
+		containers := make(map[string]containerUsage)
+		for _, container := range metric.Containers {
+			containers[container.Name] = container
+		}
+		for _, container := range item.Status.Containers {
+			value, ok := containers[container.Name]
+			if !ok || value.Usage["cpu"] == "" || value.Usage["memory"] == "" {
+				return fmt.Errorf("incomplete container usage: %s", item.Metadata.Name)
+			}
+		}
+	}
+	return nil
+}
+
 func baselineRunning(current record) error {
 	if current.Job.Status.Active != 1 || current.Job.Status.Succeeded != 0 || current.Job.Status.Failed != 0 || len(current.LoadPods) != 1 || current.LoadPods[0].Status.Phase != "Running" {
 		return errors.New("observer must start before the active load Job runs")
@@ -358,21 +406,49 @@ func (o *observer) run(ctx context.Context) error {
 	if err := encoder.Encode(o.Settings); err != nil {
 		return err
 	}
-	previous := time.Now()
-	baseline, err := o.sample(ctx)
-	if err != nil {
-		return err
+	baselineContext, cancelBaseline := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelBaseline()
+	var baseline record
+	var previous time.Time
+	for {
+		previous = time.Now()
+		baseline, err = o.sample(baselineContext)
+		if err != nil {
+			return err
+		}
+		if err := validate(baseline, baseline, o.Settings.Replicas); err != nil {
+			return err
+		}
+		if err := baselineRunning(baseline); err != nil {
+			return err
+		}
+		usageErr := validateUsage(baseline)
+		if usageErr == nil {
+			break
+		}
+		wait := map[string]any{"kind": "baseline_wait", "utc": time.Now().UTC(), "error": usageErr.Error()}
+		if err := encoder.Encode(wait); err != nil {
+			return err
+		}
+		if err := output.Sync(); err != nil {
+			return err
+		}
+		if baselineContext.Err() != nil {
+			return fmt.Errorf("initial Pod metrics not ready within 30 seconds: %w", usageErr)
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-baselineContext.Done():
+			timer.Stop()
+			return baselineContext.Err()
+		case <-timer.C:
+		}
 	}
+	cancelBaseline()
 	if err := encoder.Encode(baseline); err != nil {
 		return err
 	}
 	if err := output.Sync(); err != nil {
-		return err
-	}
-	if err := validate(baseline, baseline, o.Settings.Replicas); err != nil {
-		return err
-	}
-	if err := baselineRunning(baseline); err != nil {
 		return err
 	}
 	for _, path := range []string{o.Settings.Report, o.Settings.ExitStatus} {
@@ -385,6 +461,9 @@ func (o *observer) run(ctx context.Context) error {
 	deadline := previous.Add(o.Settings.Duration)
 	for {
 		if err := validate(current, baseline, o.Settings.Replicas); err != nil {
+			return err
+		}
+		if err := validateUsage(current); err != nil {
 			return err
 		}
 		if sampleTime.Sub(previous) > o.Settings.Interval+30*time.Second {

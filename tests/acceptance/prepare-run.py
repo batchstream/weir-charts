@@ -36,7 +36,13 @@ def render(cfg):
     report = '/results/' + run + '.jsonl'
     observation = '/results/' + run + '-observations.jsonl'
     exit_status = '/results/' + run + '-exit.json'
-    args = ['-address', cfg['address'], '-mongo-resource', cfg['mongoResource'], '-search-resource', cfg['searchResource'], '-run-id', run,
+    targets = cfg.get('targets', [])
+    if targets and cfg.get('address'):
+        raise ValueError('set only one of targets or address')
+    if targets and (len(targets) != 3 or len(set(targets)) != 3):
+        raise ValueError('fixed three-Pod qualification needs three distinct targets')
+    destination = ['-targets', ','.join(targets)] if targets else ['-address', cfg['address']]
+    args = destination + ['-mongo-resource', cfg['mongoResource'], '-search-resource', cfg['searchResource'], '-run-id', run,
             '-duration', cfg['duration'], '-workers', '6', '-cycles-per-second', '5', '-max-p99', '500ms',
             '-server-revision', cfg['serverRevision'], '-image-digest', cfg['imageDigest'], '-chart-version', cfg['chartVersion'], '-sdk-revision', cfg['sdkRevision'],
             '-observer-status', observation + '.status.json', '-observer-heartbeat', observation + '.ready']
