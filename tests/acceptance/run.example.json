@@ -17,5 +17,9 @@
   "chartVersion": "0.1.0",
   "sdkRevision": "REPLACE_WITH_FULL_SOURCE_COMMIT",
   "runnerSHA256": "REPLACE_WITH_BINARY_SHA256",
-  "observerSHA256": "REPLACE_WITH_BINARY_SHA256"
+  "observerSHA256": "REPLACE_WITH_BINARY_SHA256",
+  "resourceEvidenceSource": "prometheus",
+  "prometheusURL": "http://prometheus.monitoring.svc:9090",
+  "prometheusSourceUID": "REPLACE_WITH_SOURCE_POD_UID",
+  "evidenceToolSHA256": "REPLACE_WITH_TOOL_SHA256"
 }

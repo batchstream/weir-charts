@@ -94,6 +94,16 @@ class ChartTests(unittest.TestCase):
         expected = {"type": "Recreate"}
         self.assertEqual(strategy, expected)
 
+    def test_acceptance_annotations_use_existing_pod_discovery(self):
+        overlay = yaml.safe_load((ROOT / 'tests/acceptance/prometheus-values.yaml').read_text())
+        overlay['podAnnotations']['cluster-autoscaler.kubernetes.io/safe-to-evict'] = 'false'
+        resources = render(overlay)
+        annotations = resources['Deployment']['spec']['template']['metadata']['annotations']
+        self.assertEqual(annotations['prometheus.io/scrape'], 'true')
+        self.assertEqual(annotations['prometheus.io/port'], '7449')
+        self.assertEqual(annotations['prometheus.io/path'], '/metrics')
+        self.assertEqual(annotations['cluster-autoscaler.kubernetes.io/safe-to-evict'], 'false')
+
     def test_invalid_values_fail_before_cluster_mutation(self):
         for invalid in (
             {"metrics": {"enabled": True}}, {"replicaCount": 0}, {"containerPort": 70000},
