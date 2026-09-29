@@ -20,4 +20,16 @@ The observer freezes Pod/Job UIDs and container image IDs, requires all service 
 
 Success requires all of: the load Job succeeded with exit code zero; its last durable JSONL record is `passed` for the exact run ID and duration with zero failures/UNKNOWN; and the observer Job succeeded with a durable `passed: true` status after validating that same load evidence. A successful Job alone is insufficient. Record the cycle latency histogram's upper bound as **cycle p99**, not per-RPC p99. The six workers at five cycles/second target about 90 main RPC/second; require at least 98% of planned cycles.
 
-Export every run's reports, stderr, observation JSONL, terminal statuses, Job/Pod identities, binary hashes, image/source/chart identities and the failed-attempt history through a read-only mount of the PVC. Verify local checksums before removing only task-owned resources. Namespace deletion also removes PVCs with a Delete reclaim policy, so results must be exported first. Keep shared CNI and unrelated workloads unchanged unless separately authorized; a policy object without tested enforcement does not satisfy the network gate.
+Export every run's reports, stderr, observation JSONL, terminal statuses, Job/Pod identities, binary hashes, image/source/chart identities and the failed-attempt history through a read-only mount of the PVC. The shell's exit status uses an atomic hard link. Plain `kubectl cp` can export hard-linked entries as empty files; use the carrier's GNU tar to dereference them, then compare every extracted file against checksums generated on the PVC:
+
+```sh
+kubectl --context "$CONTEXT" -n "$NAMESPACE" exec "$RESULT_READER" -- \
+  tar --hard-dereference -cf - -C /results . > results.tar
+mkdir exported-results
+tar -xf results.tar -C exported-results
+kubectl --context "$CONTEXT" -n "$NAMESPACE" exec "$RESULT_READER" -- \
+  bash -c 'cd /results && sha256sum *' > exported-results/SHA256SUMS
+(cd exported-results && shasum -a 256 -c SHA256SUMS)
+```
+
+Run this after both Jobs terminate so files are stable. Verify all local checksums before removing only task-owned resources. Namespace deletion also removes PVCs with a Delete reclaim policy, so results must be exported first. Keep shared CNI and unrelated workloads unchanged unless separately authorized; a policy object without tested enforcement does not satisfy the network gate.
