@@ -51,7 +51,8 @@ class ChartTests(unittest.TestCase):
         policy = render()["NetworkPolicy"]["spec"]
         self.assertEqual(policy["policyTypes"], ["Ingress", "Egress"])
         self.assertEqual(len(policy["egress"]), 1)
-        self.assertEqual(policy["ingress"][0]["from"], [{"podSelector": {"matchLabels": {"weir-client": "true"}}}])
+        expected_sources = [{"podSelector": {"matchLabels": {"weir-client": "true"}}}]
+        self.assertEqual(policy["ingress"][0]["from"], expected_sources)
         self.assertEqual([p["port"] for p in policy["egress"][0]["ports"]], [53, 53])
 
     def test_configuration_rolls_and_secret_is_never_rendered(self):
@@ -60,14 +61,17 @@ class ChartTests(unittest.TestCase):
         a, b = render(first), render(second)
         self.assertEqual(json.loads(a["ConfigMap"]["data"]["node.json"])["memory_mib"], 768)
         self.assertNotEqual(a["Deployment"]["spec"]["template"]["metadata"]["annotations"], b["Deployment"]["spec"]["template"]["metadata"]["annotations"])
-        secret = render({"config": {"existingSecret": "approved-v2", "revision": "v2"}})
+        secret_values = {"config": {"existingSecret": "approved-v2", "revision": "v2"}}
+        secret = render(secret_values)
         self.assertNotIn("ConfigMap", secret)
         self.assertNotIn("Secret", secret)
 
     def test_three_replicas_and_optional_peer(self):
-        resources = render({"replicaCount": 3, "podDisruptionBudget": {"enabled": True}, "peer": {"enabled": True}})
+        values = {"replicaCount": 3, "podDisruptionBudget": {"enabled": True}, "peer": {"enabled": True}}
+        resources = render(values)
         self.assertEqual(resources["Deployment"]["spec"]["replicas"], 3)
-        self.assertEqual(resources["Deployment"]["spec"]["strategy"]["rollingUpdate"], {"maxSurge": 0, "maxUnavailable": 1})
+        expected_rolling = {"maxSurge": 0, "maxUnavailable": 1}
+        self.assertEqual(resources["Deployment"]["spec"]["strategy"]["rollingUpdate"], expected_rolling)
         self.assertEqual(resources["PodDisruptionBudget"]["spec"]["maxUnavailable"], 1)
         self.assertEqual([p["name"] for p in resources["Service"]["spec"]["ports"]], ["grpc", "peer"])
 
@@ -77,15 +81,18 @@ class ChartTests(unittest.TestCase):
         resources = render(values)
         self.assertEqual(resources["NetworkPolicy"]["spec"]["ingress"], [rule])
         ports = resources["Deployment"]["spec"]["template"]["spec"]["containers"][0]["ports"]
-        self.assertIn({"name": "metrics", "containerPort": 7449}, ports)
+        metrics_port = {"name": "metrics", "containerPort": 7449}
+        self.assertIn(metrics_port, ports)
         values["config"] = {"existingSecret": "", "data": {"diagnostics": "127.0.0.1:7449"}}
         self.assertNotEqual(render(values, success=False).returncode, 0)
         values["config"]["data"] = {"diagnostics": "0.0.0.0:7449", "diagnostics_allow_intranet": True}
         self.assertIn("ConfigMap", render(values))
 
     def test_recreate_has_no_incompatible_rolling_settings(self):
-        strategy = render({"strategy": {"type": "Recreate"}})["Deployment"]["spec"]["strategy"]
-        self.assertEqual(strategy, {"type": "Recreate"})
+        values = {"strategy": {"type": "Recreate"}}
+        strategy = render(values)["Deployment"]["spec"]["strategy"]
+        expected = {"type": "Recreate"}
+        self.assertEqual(strategy, expected)
 
     def test_invalid_values_fail_before_cluster_mutation(self):
         for invalid in (
