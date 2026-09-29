@@ -1,0 +1,11 @@
+{{- include "weir.validate" . -}}
+{{- if .Values.config.data }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "weir.fullname" . }}
+  labels:
+    {{- include "weir.labels" . | nindent 4 }}
+data:
+  {{ .Values.config.key }}: {{ .Values.config.data | toJson | quote }}
+{{- end }}

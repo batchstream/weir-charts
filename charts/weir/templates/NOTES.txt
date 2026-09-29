@@ -1,0 +1,6 @@
+Weir gRPC endpoint: {{ include "weir.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+Application traffic is plaintext and requires a trusted, isolated network.
+Verify the cluster CNI enforces NetworkPolicy and allow the necessary backend destinations.
+Readiness means the serving lifecycle is ready; verify actual SDK operations before promotion.
+A missing mutation response is UNKNOWN: never retry an uncertain mutation automatically.

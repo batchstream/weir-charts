@@ -1,0 +1,21 @@
+{
+  "namespace": "weir-acceptance",
+  "run": "weir-soak-unique-run-id",
+  "owner": "weir-acceptance",
+  "pvc": "weir-soak-results",
+  "node": "REPLACE_WITH_RESULTS_PVC_NODE",
+  "architecture": "arm64",
+  "address": "weir-weir.weir-acceptance.svc:7447",
+  "mongoResource": "weir://mongo/weir_acceptance/records",
+  "searchResource": "weir://search/records",
+  "duration": "24h",
+  "observerDuration": "24h10m",
+  "deadlineSeconds": 87300,
+  "interval": "1m",
+  "serverRevision": "REPLACE_WITH_FULL_SOURCE_COMMIT",
+  "imageDigest": "REPLACE_WITH_IMMUTABLE_IMAGE_DIGEST",
+  "chartVersion": "0.1.0",
+  "sdkRevision": "REPLACE_WITH_FULL_SOURCE_COMMIT",
+  "runnerSHA256": "REPLACE_WITH_BINARY_SHA256",
+  "observerSHA256": "REPLACE_WITH_BINARY_SHA256"
+}

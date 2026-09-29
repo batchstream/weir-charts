@@ -1,0 +1,123 @@
+{{- include "weir.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "weir.fullname" . }}
+  labels:
+    {{- include "weir.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 180
+  strategy:
+    type: {{ .Values.strategy.type }}
+    {{- if eq .Values.strategy.type "RollingUpdate" }}
+    rollingUpdate:
+      {{- toYaml .Values.strategy.rollingUpdate | nindent 6 }}
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "weir.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "weir.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Values.config.data | toJson | sha256sum }}
+        weir.batchstream.io/config-revision: {{ .Values.config.revision | quote }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: weir
+          image: {{ include "weir.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["-config", "/etc/weir/{{ .Values.config.key }}"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.containerPort }}
+            {{- if .Values.peer.enabled }}
+            - name: peer
+              containerPort: {{ .Values.peer.port }}
+            {{- end }}
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.diagnostics.port }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            exec:
+              command: ["/weir", "-probe", "ready", "-probe-address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
+            timeoutSeconds: 2
+            periodSeconds: 2
+            failureThreshold: 15
+          readinessProbe:
+            exec:
+              command: ["/weir", "-probe", "ready", "-probe-address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
+            timeoutSeconds: 2
+            periodSeconds: 2
+            failureThreshold: 1
+          livenessProbe:
+            exec:
+              command: ["/weir", "-probe", "live", "-probe-address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
+            timeoutSeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /etc/weir
+              readOnly: true
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          {{- if .Values.config.existingSecret }}
+          secret:
+            secretName: {{ .Values.config.existingSecret }}
+            defaultMode: 0440
+          {{- else }}
+          configMap:
+            name: {{ include "weir.fullname" . }}
+            defaultMode: 0440
+          {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "weir.fullname" . }}
+  labels:
+    {{- include "weir.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "weir.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ .Values.service.port }}
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: kubernetes.io/h2c
+    {{- if .Values.peer.enabled }}
+    - name: peer
+      port: {{ .Values.peer.port }}
+      targetPort: peer
+      protocol: TCP
+      appProtocol: kubernetes.io/h2c
+    {{- end }}

@@ -1,0 +1,53 @@
+name: Publish chart
+on:
+  push:
+    tags: ['weir-*']
+concurrency:
+  group: publish-chart
+  cancel-in-progress: false
+permissions:
+  contents: write
+  packages: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Require reviewed main commit
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.17.0
+      - run: pip install -r requirements-dev.txt
+      - run: make package
+      - name: Check version
+        run: test "$GITHUB_REF_NAME" = "weir-$(helm show chart charts/weir | awk '/^version:/ {print $2}')"
+      - name: Verify immutable version is absent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(helm show chart charts/weir | awk '/^version:/ {print $2}')
+          python3 scripts/check-release.py "$version"
+      - name: Publish OCI chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          helm push dist/weir-*.tgz oci://ghcr.io/batchstream/charts
+      - name: Checksum release archive
+        run: cd dist && sha256sum *.tgz > SHA256SUMS
+      - name: Attach release archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tgz dist/SHA256SUMS --generate-notes

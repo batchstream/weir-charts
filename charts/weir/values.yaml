@@ -1,0 +1,76 @@
+replicaCount: 1
+nameOverride: ""
+fullnameOverride: ""
+image:
+  repository: ghcr.io/batchstream/weir
+  tag: "v0.1.0"
+  digest: sha256:93810bbfb9eb720d0d42296a3e856f60e1d94bdb22279555ad94a8fc79c0f7df
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+# Provision this Secret separately; never put backend credentials in Helm values.
+config:
+  existingSecret: weir-config
+  key: node.json
+  # Non-secret configuration only. Set existingSecret to "" when using data.
+  data: null
+  # Change this when updating an existing Secret to trigger a controlled restart.
+  revision: ""
+service:
+  port: 7447
+  annotations: {}
+containerPort: 7447
+peer:
+  enabled: false
+  port: 7448
+diagnostics:
+  port: 7449
+# Requires diagnostics: 0.0.0.0:7449 and diagnostics_allow_intranet: true in config.
+metrics:
+  enabled: false
+  annotations: {}
+  ingress: []
+resources:
+  requests:
+    cpu: "2"
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+terminationGracePeriodSeconds: 15
+# No surge: still budget terminating Pods alongside replacements.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+networkPolicy:
+  enabled: true
+  # Only labeled clients in the release namespace can reach application gRPC.
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              weir-client: "true"
+      ports:
+        - protocol: TCP
+          port: 7447
+  # Add precise backend/peer destinations here. DNS is allowed separately.
+  egress: []
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+# Read-only CA/config mounts only; Weir does not need persistent application storage.
+extraVolumes: []
+extraVolumeMounts: []
