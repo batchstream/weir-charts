@@ -24,6 +24,11 @@ peer:
   port: 7448
 diagnostics:
   port: 7449
+# Requires diagnostics: 0.0.0.0:7449 and diagnostics_allow_intranet: true in config.
+metrics:
+  enabled: false
+  annotations: {}
+  ingress: []
 resources:
   requests:
     cpu: "2"

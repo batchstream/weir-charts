@@ -71,9 +71,13 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(resources["PodDisruptionBudget"]["spec"]["maxUnavailable"], 1)
         self.assertEqual([p["name"] for p in resources["Service"]["spec"]["ports"]], ["grpc", "peer"])
 
+    def test_recreate_has_no_incompatible_rolling_settings(self):
+        strategy = render({"strategy": {"type": "Recreate"}})["Deployment"]["spec"]["strategy"]
+        self.assertEqual(strategy, {"type": "Recreate"})
+
     def test_invalid_values_fail_before_cluster_mutation(self):
         for invalid in (
-            {"replicaCount": 0}, {"containerPort": 70000},
+            {"metrics": {"enabled": True}}, {"replicaCount": 0}, {"containerPort": 70000},
             {"terminationGracePeriodSeconds": 4}, {"unknownSetting": True},
             {"image": {"digest": "sha256:bad"}},
             {"config": {"key": "../secret"}},

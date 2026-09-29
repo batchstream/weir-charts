@@ -24,7 +24,8 @@
     "diagnostics",
     "podDisruptionBudget",
     "strategy",
-    "networkPolicy"
+    "networkPolicy",
+    "metrics"
   ],
   "properties": {
     "resources": {
@@ -238,6 +239,26 @@
         },
         "dns": {
           "type": "object"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "annotations",
+        "ingress"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "type": "object"
+        },
+        "ingress": {
+          "type": "array"
         }
       }
     }

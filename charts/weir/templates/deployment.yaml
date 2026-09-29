@@ -10,7 +10,11 @@ spec:
   revisionHistoryLimit: 3
   progressDeadlineSeconds: 180
   strategy:
-    {{- toYaml .Values.strategy | nindent 4 }}
+    type: {{ .Values.strategy.type }}
+    {{- if eq .Values.strategy.type "RollingUpdate" }}
+    rollingUpdate:
+      {{- toYaml .Values.strategy.rollingUpdate | nindent 6 }}
+    {{- end }}
   selector:
     matchLabels:
       {{- include "weir.selectorLabels" . | nindent 6 }}
@@ -55,6 +59,10 @@ spec:
             {{- if .Values.peer.enabled }}
             - name: peer
               containerPort: {{ .Values.peer.port }}
+            {{- end }}
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.diagnostics.port }}
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

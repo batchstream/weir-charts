@@ -12,6 +12,11 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
     {{- toYaml .Values.networkPolicy.ingress | nindent 4 }}
+    {{- if .Values.metrics.enabled }}
+    {{- with .Values.metrics.ingress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- end }}
   egress:
     - to:
         - namespaceSelector:

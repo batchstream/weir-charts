@@ -80,6 +80,16 @@ must bind the same port and your ingress rules must permit only intended peers.
 For custom application/diagnostic ports update both values and the supplied config.
 Network policy ports must match the actual container listeners.
 
+To expose bounded Prometheus metrics, set `metrics.enabled: true`, configure
+`metrics.ingress` with the authorized scraper Pod/namespace selector and TCP port
+7449, and set `diagnostics: "0.0.0.0:7449"` plus
+`diagnostics_allow_intranet: true` in Weir's configuration. ConfigMap mode validates
+these fields; an external Secret must supply them through its own review process.
+The separate `<release>-weir-metrics` ClusterIP exposes `/metrics` on the diagnostics
+port. The port also serves fixed health handlers; it exposes no pprof/debug APIs.
+`metrics.annotations` can configure your existing scraper. NetworkPolicy remains
+required; enabling the Service does not grant access to arbitrary sources.
+
 ## Develop and release
 
 ```sh
