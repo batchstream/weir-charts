@@ -223,6 +223,9 @@ func (o *observer) sampleWithin(ctx context.Context, window samplingWindow) (rec
 		if err != nil {
 			return current, sampleTime, err
 		}
+		// Validate freshness when the complete HTTP sample is available, including
+		// time spent waiting for a successful response body.
+		current.UTC = time.Now().UTC()
 		if err := validate(current, window.Baseline, o.Settings.Replicas); err != nil {
 			return current, sampleTime, err
 		}
@@ -554,6 +557,9 @@ func (o *observer) run(ctx context.Context) error {
 		}
 		if err := heartbeat(o.Settings.Output + ".ready"); err != nil {
 			return err
+		}
+		if time.Now().Sub(previous) > o.Settings.Interval+30*time.Second {
+			return errors.New("observation gap exceeded while persisting heartbeat")
 		}
 		if current.Job.Status.Succeeded == 1 && current.LoadPods[0].Status.Phase == "Succeeded" {
 			return verifyLoad(o.Settings)

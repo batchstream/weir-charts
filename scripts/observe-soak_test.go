@@ -198,7 +198,7 @@ func TestObserverSuccessfulHeadersCannotOutliveSamplingGap(t *testing.T) {
 }
 
 func TestObserverDoesNotRetryOtherFailures(t *testing.T) {
-	for _, mode := range []string{"401", "403", "500", "malformed", "missing", "stale", "identity", "identity-with-503", "health", "pods-503"} {
+	for _, mode := range []string{"401", "403", "500", "malformed", "missing", "stale", "stale-on-completion", "identity", "identity-with-503", "health", "pods-503"} {
 		t.Run(mode, func(t *testing.T) {
 			fixture := samplingFixture{}
 			observer := samplingObserver(t, &fixture)
@@ -213,12 +213,16 @@ func TestObserverDoesNotRetryOtherFailures(t *testing.T) {
 				fixture.Body = `{"items":`
 			case "missing":
 				fixture.Body = `{"items":[]}`
-			case "stale":
+			case "stale", "stale-on-completion":
 				var usage usageList
 				if err := json.Unmarshal(fixture.Baseline.Usage, &usage); err != nil {
 					t.Fatal(err)
 				}
 				usage.Items[0].Timestamp = time.Now().Add(-3 * time.Minute)
+				if mode == "stale-on-completion" {
+					usage.Items[0].Timestamp = time.Now().Add(-2*time.Minute + 100*time.Millisecond)
+					fixture.BodyDelay = 200 * time.Millisecond
+				}
 				body, err := json.Marshal(usage)
 				if err != nil {
 					t.Fatal(err)
@@ -231,7 +235,6 @@ func TestObserverDoesNotRetryOtherFailures(t *testing.T) {
 				fixture.Unavailable = 100
 			case "health":
 				fixture.BadHealth = true
-				observer.Settings.RequireMetrics = true
 			case "pods-503":
 				fixture.PodsUnavailable = true
 			}
