@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,10 @@ type samplingFixture struct {
 	Unavailable     int
 	Status          int
 	Body            string
+	UsageBodies     []string
+	LargeMetrics    bool
+	BadReadiness    bool
+	BadRestart      bool
 	BodyDelay       time.Duration
 	BadIdentity     bool
 	BadHealth       bool
@@ -47,6 +52,13 @@ func (f *samplingFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.BadIdentity {
 			pods[0].Metadata.UID = "replacement"
 		}
+		pods[0].Status.Containers = append([]containerStatus(nil), pods[0].Status.Containers...)
+		if f.BadReadiness {
+			pods[0].Status.Containers[0].Ready = false
+		}
+		if f.BadRestart {
+			pods[0].Status.Containers[0].Restarts = 1
+		}
 		pods = append(pods, f.Baseline.LoadPods...)
 		list := podList{Items: pods}
 		_ = encoder.Encode(list)
@@ -72,6 +84,10 @@ func (f *samplingFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			case <-time.After(f.BodyDelay):
 			}
 		}
+		if int(count) <= len(f.UsageBodies) {
+			_, _ = w.Write([]byte(f.UsageBodies[count-1]))
+			return
+		}
 		if f.Body != "" {
 			_, _ = w.Write([]byte(f.Body))
 			return
@@ -84,6 +100,9 @@ func (f *samplingFixture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = w.Write([]byte("\nweir_node_ready 1\n"))
+		if f.LargeMetrics {
+			_, _ = w.Write([]byte(strings.Repeat("# padding\n", 20000)))
+		}
 	default:
 		http.NotFound(w, r)
 	}
@@ -107,7 +126,7 @@ func samplingObserver(t *testing.T, fixture *samplingFixture) observer {
 	if err := os.WriteFile(token, []byte("fake-task-token"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := settings{Namespace: "test", Job: "load", Release: "weir", Replicas: 1, MetricsPort: port, RequireMetrics: true}
+	cfg := settings{Namespace: "test", Job: "load", Release: "weir", Replicas: 1, MetricsPort: port, RequireMetrics: true, Output: filepath.Join(t.TempDir(), "observer.jsonl")}
 	result := observer{Client: server.Client(), Settings: cfg, APIURL: server.URL, TokenFile: token}
 	return result
 }
@@ -126,7 +145,7 @@ func TestObserverMetrics503RecoversInsideExistingGap(t *testing.T) {
 	fixture := samplingFixture{Unavailable: 1}
 	observer := samplingObserver(t, &fixture)
 	output := samplingOutput(t)
-	window := samplingWindow{Baseline: fixture.Baseline, Deadline: time.Now().Add(3 * time.Second), Output: output}
+	window := samplingWindow{Baseline: &fixture.Baseline, Deadline: time.Now().Add(3 * time.Second), Output: output}
 	current, _, err := observer.sampleWithin(context.Background(), window)
 	if err != nil {
 		t.Fatal(err)
@@ -152,10 +171,10 @@ func TestObserverMetrics503RecoversInsideExistingGap(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &recovered); err != nil {
 		t.Fatal(err)
 	}
-	if retry["kind"] != "metrics_api_retry" || retry["status"] != float64(503) || retry["attempt"] != float64(1) || retry["attempt_elapsed_ns"].(float64) <= 0 || retry["remaining_ns"].(float64) <= 0 {
+	if retry["kind"] != "sample_retry" || retry["http_status"] != float64(503) || retry["attempt"] != float64(1) || retry["attempt_elapsed_ns"].(float64) <= 0 || retry["remaining_ns"].(float64) <= 0 {
 		t.Fatalf("missing retry audit: %v", retry)
 	}
-	if recovered["kind"] != "metrics_api_recovered" || recovered["attempts"] != float64(1) || recovered["elapsed_ns"].(float64) < float64(time.Second) {
+	if recovered["kind"] != "sample_recovered" || recovered["attempts"] != float64(1) || recovered["elapsed_ns"].(float64) < float64(time.Second) {
 		t.Fatalf("missing recovery duration: %v", recovered)
 	}
 }
@@ -166,7 +185,7 @@ func TestObserverMetrics503CannotRenewRemainingGap(t *testing.T) {
 	output := samplingOutput(t)
 	// The previous successful sample already consumed almost the whole 90s gap.
 	previous := time.Now().Add(-90*time.Second + 150*time.Millisecond)
-	window := samplingWindow{Baseline: fixture.Baseline, Deadline: previous.Add(90 * time.Second), Output: output}
+	window := samplingWindow{Baseline: &fixture.Baseline, Deadline: previous.Add(90 * time.Second), Output: output}
 	started := time.Now()
 	_, _, err := observer.sampleWithin(context.Background(), window)
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > time.Second {
@@ -176,7 +195,7 @@ func TestObserverMetrics503CannotRenewRemainingGap(t *testing.T) {
 		t.Fatalf("unexpected retry beyond remaining budget: %d", fixture.UsageReads.Load())
 	}
 	body, err := os.ReadFile(output.Name())
-	if err != nil || !strings.Contains(string(body), `"kind":"metrics_api_retry"`) || strings.Contains(string(body), `"pods"`) {
+	if err != nil || !strings.Contains(string(body), `"kind":"sample_retry"`) || strings.Contains(string(body), `"pods"`) {
 		t.Fatalf("lost failure audit or published an incomplete sample: %s, %v", body, err)
 	}
 }
@@ -185,22 +204,161 @@ func TestObserverSuccessfulHeadersCannotOutliveSamplingGap(t *testing.T) {
 	fixture := samplingFixture{Unavailable: 1, BodyDelay: time.Second}
 	observer := samplingObserver(t, &fixture)
 	output := samplingOutput(t)
-	window := samplingWindow{Baseline: fixture.Baseline, Deadline: time.Now().Add(1150 * time.Millisecond), Output: output}
+	window := samplingWindow{Baseline: &fixture.Baseline, Deadline: time.Now().Add(1150 * time.Millisecond), Output: output}
 	started := time.Now()
 	_, _, err := observer.sampleWithin(context.Background(), window)
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) > 2*time.Second {
 		t.Fatalf("accepted response headers without bounded body processing: %v", err)
 	}
 	body, err := os.ReadFile(output.Name())
-	if err != nil || !strings.Contains(string(body), `"kind":"metrics_api_retry"`) || strings.Contains(string(body), `"pods"`) || fixture.UsageReads.Load() != 2 {
+	if err != nil || !strings.Contains(string(body), `"kind":"sample_retry"`) || strings.Contains(string(body), `"pods"`) || fixture.UsageReads.Load() != 2 {
 		t.Fatalf("retried or published a late response: %s, %v", body, err)
 	}
 }
 
-func TestObserverDoesNotRetryOtherFailures(t *testing.T) {
-	for _, mode := range []string{"401", "403", "500", "malformed", "missing", "stale", "stale-on-completion", "identity", "identity-with-503", "health", "pods-503"} {
+func usageResponse(t *testing.T, baseline record, mode string) string {
+	t.Helper()
+	var usage usageList
+	if err := json.Unmarshal(baseline.Usage, &usage); err != nil {
+		t.Fatal(err)
+	}
+	switch mode {
+	case "missing-pod":
+		usage.Items = usage.Items[1:]
+	case "stale":
+		usage.Items[0].Timestamp = time.Now().Add(-3 * time.Minute)
+	case "stale-on-completion":
+		usage.Items[0].Timestamp = time.Now().Add(-2*time.Minute + 100*time.Millisecond)
+	case "missing-container":
+		usage.Items[0].Containers = nil
+	case "missing-memory":
+		delete(usage.Items[0].Containers[0].Usage, "memory")
+	case "missing-timestamp":
+		usage.Items[0].Timestamp = time.Time{}
+	case "future-with-missing":
+		usage.Items = usage.Items[1:]
+		usage.Items[0].Timestamp = time.Now().Add(time.Minute)
+	case "invalid-quantity-with-missing":
+		usage.Items = usage.Items[1:]
+		usage.Items[0].Containers[0].Usage["cpu"] = "not-a-quantity"
+	case "duplicate-pod":
+		usage.Items = append(usage.Items, usage.Items[0])
+	case "duplicate-container":
+		usage.Items[0].Containers = append(usage.Items[0].Containers, usage.Items[0].Containers[0])
+	}
+	body, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+func TestObserverUsageRecoversWithoutPrematureHeartbeat(t *testing.T) {
+	for _, mode := range []string{"missing-pod", "stale", "missing-container", "missing-memory", "missing-timestamp", "startup"} {
 		t.Run(mode, func(t *testing.T) {
 			fixture := samplingFixture{}
+			observer := samplingObserver(t, &fixture)
+			responseMode := mode
+			if mode == "startup" {
+				responseMode = "missing-pod"
+			}
+			fixture.UsageBodies = []string{usageResponse(t, fixture.Baseline, responseMode)}
+			output := samplingOutput(t)
+			ready := observer.Settings.Output + ".ready"
+			oldTime := time.Unix(1, 0)
+			if mode != "startup" {
+				if err := os.WriteFile(ready, []byte("old"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(ready, oldTime, oldTime); err != nil {
+					t.Fatal(err)
+				}
+			}
+			window := samplingWindow{Baseline: &fixture.Baseline, Deadline: time.Now().Add(3 * time.Second), Output: output}
+			if mode == "startup" {
+				window.Baseline = nil
+			}
+			finished := make(chan error, 1)
+			go func() { _, _, err := observer.sampleWithin(context.Background(), window); finished <- err }()
+			waitUntil := time.Now().Add(500 * time.Millisecond)
+			var body []byte
+			for time.Now().Before(waitUntil) {
+				body, _ = os.ReadFile(output.Name())
+				if strings.Contains(string(body), `"kind":"sample_retry"`) {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if !strings.Contains(string(body), `"kind":"sample_retry"`) || strings.Contains(string(body), `"pods"`) {
+				t.Fatalf("missing rejected-attempt audit: %s", body)
+			}
+			var audit map[string]any
+			if err := json.Unmarshal(body, &audit); err != nil {
+				t.Fatal(err)
+			}
+			if audit["reason"] != "usage_unavailable" || audit["attempt_elapsed_ns"].(float64) <= 0 || audit["remaining_ns"].(float64) <= 0 {
+				t.Fatalf("incomplete audit: %v", audit)
+			}
+			issues := audit["issues"].([]any)
+			issue := issues[0].(map[string]any)
+			if issue["pod"] == "" || issue["pod_uid"] == "" || issue["reason"] == "" {
+				t.Fatalf("missing issue identity: %v", issue)
+			}
+			info, err := os.Stat(ready)
+			if mode == "startup" {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatal("published baseline readiness without a complete sample")
+				}
+			} else if err != nil || !info.ModTime().Equal(oldTime) {
+				t.Fatal("rejected usage refreshed heartbeat")
+			}
+			if err := <-finished; err != nil {
+				t.Fatal(err)
+			}
+			if fixture.PodReads.Load() != 2 || fixture.JobReads.Load() != 2 || fixture.MetricsReads.Load() != 2 || fixture.UsageReads.Load() != 2 {
+				t.Fatal("recovery did not refresh every source")
+			}
+			body, err = os.ReadFile(ready)
+			if err != nil || string(body) != "ready\n" {
+				t.Fatal("valid complete sample did not publish readiness")
+			}
+		})
+	}
+}
+
+func TestObserverUnavailableUsageCannotRenewDeadline(t *testing.T) {
+	for _, mode := range []string{"missing-pod", "stale", "missing-container", "missing-memory", "stale-on-completion"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := samplingFixture{}
+			observer := samplingObserver(t, &fixture)
+			fixture.Body = usageResponse(t, fixture.Baseline, mode)
+			budget := 150 * time.Millisecond
+			if mode == "stale-on-completion" {
+				fixture.BodyDelay = 200 * time.Millisecond
+				budget = 350 * time.Millisecond
+			}
+			output := samplingOutput(t)
+			previous := time.Now().Add(-90*time.Second + budget)
+			window := samplingWindow{Baseline: &fixture.Baseline, Deadline: previous.Add(90 * time.Second), Output: output}
+			_, _, err := observer.sampleWithin(context.Background(), window)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("want original deadline, got %v", err)
+			}
+			if _, err := os.Stat(observer.Settings.Output + ".ready"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("expired incomplete sample published a heartbeat")
+			}
+			body, err := os.ReadFile(output.Name())
+			if err != nil || !strings.Contains(string(body), `"kind":"sample_retry"`) || strings.Contains(string(body), `"pods"`) {
+				t.Fatalf("invalid expiry audit: %s, %v", body, err)
+			}
+		})
+	}
+}
+
+func TestObserverDoesNotRetryHardFailuresAlongsideMissingUsage(t *testing.T) {
+	for _, mode := range []string{"401", "403", "500", "malformed", "null-list", "future-with-missing", "invalid-quantity-with-missing", "duplicate-pod", "duplicate-container", "identity", "identity-with-503", "restart", "readiness", "health", "pods-503"} {
+		t.Run(mode, func(t *testing.T) {
+			fixture := samplingFixture{Body: `{"items":[]}`}
 			observer := samplingObserver(t, &fixture)
 			switch mode {
 			case "401":
@@ -211,44 +369,104 @@ func TestObserverDoesNotRetryOtherFailures(t *testing.T) {
 				fixture.Status = 500
 			case "malformed":
 				fixture.Body = `{"items":`
-			case "missing":
-				fixture.Body = `{"items":[]}`
-			case "stale", "stale-on-completion":
-				var usage usageList
-				if err := json.Unmarshal(fixture.Baseline.Usage, &usage); err != nil {
-					t.Fatal(err)
-				}
-				usage.Items[0].Timestamp = time.Now().Add(-3 * time.Minute)
-				if mode == "stale-on-completion" {
-					usage.Items[0].Timestamp = time.Now().Add(-2*time.Minute + 100*time.Millisecond)
-					fixture.BodyDelay = 200 * time.Millisecond
-				}
-				body, err := json.Marshal(usage)
-				if err != nil {
-					t.Fatal(err)
-				}
-				fixture.Body = string(body)
+			case "null-list":
+				fixture.Body = `{"items":null}`
+			case "future-with-missing", "invalid-quantity-with-missing", "duplicate-pod", "duplicate-container":
+				fixture.Body = usageResponse(t, fixture.Baseline, mode)
 			case "identity":
 				fixture.BadIdentity = true
 			case "identity-with-503":
 				fixture.BadIdentity = true
 				fixture.Unavailable = 100
+			case "restart":
+				fixture.BadRestart = true
+			case "readiness":
+				fixture.BadReadiness = true
 			case "health":
 				fixture.BadHealth = true
 			case "pods-503":
 				fixture.PodsUnavailable = true
 			}
 			output := samplingOutput(t)
-			window := samplingWindow{Baseline: fixture.Baseline, Deadline: time.Now().Add(3 * time.Second), Output: output}
+			window := samplingWindow{Baseline: &fixture.Baseline, Deadline: time.Now().Add(3 * time.Second), Output: output}
 			_, _, err := observer.sampleWithin(context.Background(), window)
 			if err == nil || fixture.PodReads.Load() != 1 || fixture.UsageReads.Load() > 1 {
-				t.Fatalf("accepted or retried non-transient failure: %v", err)
+				t.Fatalf("accepted or retried hard failure: %v", err)
 			}
 			body, readErr := os.ReadFile(output.Name())
 			if readErr != nil || len(body) != 0 {
-				t.Fatalf("published failure as retry or sample: %s, %v", body, readErr)
+				t.Fatalf("published hard failure as retry/sample: %s, %v", body, readErr)
+			}
+			if _, err := os.Stat(observer.Settings.Output + ".ready"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("hard failure published readiness")
 			}
 		})
+	}
+}
+
+func TestObserverOutputWriteOverrunCannotPublishHeartbeat(t *testing.T) {
+	fixture := samplingFixture{LargeMetrics: true}
+	observer := samplingObserver(t, &fixture)
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	window := samplingWindow{Baseline: &fixture.Baseline, Deadline: time.Now().Add(150 * time.Millisecond), Output: writer}
+	finished := make(chan error, 1)
+	go func() {
+		_, _, err := observer.sampleWithin(context.Background(), window)
+		_ = writer.Close()
+		finished <- err
+	}()
+	// A real full pipe delays output past the existing deadline, without a fake
+	// clock, file interface or injected function. Releasing it must not publish ready.
+	time.Sleep(250 * time.Millisecond)
+	written, err := io.Copy(io.Discard, reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-finished; !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("accepted late durable output: %v", err)
+	}
+	if written < 100000 {
+		t.Fatalf("output did not exercise a blocked write: %d", written)
+	}
+	if _, err := os.Stat(observer.Settings.Output + ".ready"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("late output published heartbeat")
+	}
+}
+
+func TestObserverExpiredHeartbeatCannotReplacePreviousEvidence(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "ready")
+	if err := os.WriteFile(file, []byte("previous"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := heartbeat(file, time.Now().Add(-time.Second)); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(file)
+	if err != nil || string(body) != "previous" {
+		t.Fatal("expired window replaced readiness")
+	}
+}
+
+func TestObserverBaselineRejectsExistingLoadReport(t *testing.T) {
+	fixture := samplingFixture{}
+	observer := samplingObserver(t, &fixture)
+	observer.Settings.Report = filepath.Join(t.TempDir(), "existing-load.jsonl")
+	if err := os.WriteFile(observer.Settings.Report, []byte("already started"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output := samplingOutput(t)
+	window := samplingWindow{Deadline: time.Now().Add(time.Second), Output: output}
+	_, _, err := observer.sampleWithin(context.Background(), window)
+	if err == nil || !strings.Contains(err.Error(), "load evidence exists") {
+		t.Fatalf("accepted a late baseline: %v", err)
+	}
+	if _, err := os.Stat(observer.Settings.Output + ".ready"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("late baseline published readiness")
 	}
 }
 

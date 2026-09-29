@@ -145,13 +145,48 @@ observation stopped. All seven result files were exported with hard-link
 dereferencing, matched against independent PVC checksums, and fully parsed,
 including both failed terminal statuses. The original failed evidence remains.
 
-The observer now permits only an explicit usage API HTTP 503 to retry within the
-remaining original sampling deadline, recording each attempt and resampling all
-state after recovery. The 90-second sample-gap, two-minute usage-age and
-150-second watchdog limits are unchanged. This tool correction requires a new
-run with its own identity and complete duration; it cannot reclassify this attempt
-as passed. Offline HTTP-boundary tests cover bounded recovery, exhausted budget,
-late response bodies, audit evidence and non-retryable failures.
+The first correction, independently reviewed and merged in PR #2 at source
+`0861d8d45a9e7a46c321042b3566f84470d608e9`, allowed explicit usage API HTTP 503
+recovery only within the existing sampling window. Its observer binary SHA256 was
+`aec6f884a2875208eca3c55ada9b7b3bd1747e902c4ac042821fa8b9ae43f64b`.
+The deployed Chart remained 0.1.0; its old release tag does not contain this
+separately built acceptance tool. A new three-minute pair passed with 5,394 cycles
+in 180.037728265 seconds, cycle p99 at most 20 ms, zero failures/UNKNOWN, both Jobs
+successful, five complete observer samples and business activity on all three
+Pods and both backends. This did not establish a full-day result.
+
+## Second formal attempt: failed; complete-sample contract approved
+
+R2 started at 2026-09-29T06:08:33.980176152Z and failed at
+06:10:33.981678716Z after 120.001503529 seconds. The final report contains
+3,594 cycles, 7,188 verified writes and reads, two stream checks, cycle p99 at most
+20 ms, seven failures and zero UNKNOWN. Both Jobs exited one with zero restarts.
+The observer rejected required backend usage with the old combined
+`missing or stale Pod usage` diagnostic. Only two complete samples were persisted;
+the rejected usage response was not retained. Missing data, container-count
+mismatch and staleness cannot be distinguished retrospectively. No HTTP 503 retry
+was recorded in this run.
+
+Metrics-server was replaced again shortly before the failure, and its APIService
+became Available nine seconds before the rejected sample. This is a temporal
+association, not proof of a specific missing field, outage duration or root cause
+of the replacement. A later successful usage query does not prove that the failed
+sample was complete. All seven R2 result files were independently matched against
+PVC hashes and fully parsed. Both failed runs and the successful short pairs are
+preserved; no short test or later tool correction qualifies either failed run.
+
+The approved contract for subsequent runs accepts only complete, healthy,
+unexpired observations inside the same fixed sampling window. Explicit usage API
+HTTP 503 and missing/stale/incomplete usage may cause complete recollection within
+that window. This changes the former per-response fail-fast rule explicitly; it
+does not change the 30-second startup deadline, 90-second steady sample window,
+120-second usage age, 150-second watchdog or any business/24-hour success gate.
+Hard identity, health, permission and protocol errors retain immediate precedence.
+Each rejected attempt now records its specific reason, affected objects,
+timestamps, duration and remaining budget, and never refreshes the heartbeat.
+A new independently reviewed source/binary, run identity and full-duration result
+are still required. No shared metrics-server, CNI or node-pool changes are part of
+this correction.
 
 ## Network boundary and remaining evidence
 
@@ -167,7 +202,7 @@ The release OCI archive must be fetched and
 installed from its published location. The 24-hour load run starts only after the
 final versions and configuration are fixed and fault/rollout checks have ended.
 A zero-retry Job writes JSONL and exit status to a dedicated 1 GiB gp3 result PVC.
-`scripts/observe-soak.go` runs independently in the cluster and records each minute's exact Pod/Job identities, container image IDs, restart counts, readiness, Kubernetes CPU/memory usage and Weir metrics to the persistent volume. It fails on unexpected replacement, restart, readiness loss, Job failure, scrape/API errors or an excessive observation gap, with only the bounded usage API HTTP 503 recovery described above. The SDK watchdog cancels load if the observer fails or its heartbeat stops. Final success additionally verifies the durable runner `passed` record, exact run ID/duration, zero errors/UNKNOWN and exit code zero. Its output path must be new. See [the reproducible run templates](../tests/acceptance/README.md). The initial local Python sampler was calibration support only. The observer targets this fixed three-Weir/two-backend
+`scripts/observe-soak.go` runs independently in the cluster and records each minute's exact Pod/Job identities, container image IDs, restart counts, readiness, Kubernetes CPU/memory usage and Weir metrics to the persistent volume. It fails on unexpected replacement, restart, readiness loss, Job failure, scrape/API errors or an excessive observation gap, with only the bounded usage unavailability recovery described above. The SDK watchdog cancels load if the observer fails or its heartbeat stops. Final success additionally verifies the durable runner `passed` record, exact run ID/duration, zero errors/UNKNOWN and exit code zero. Its output path must be new. See [the reproducible run templates](../tests/acceptance/README.md). The initial local Python sampler was calibration support only. The observer targets this fixed three-Weir/two-backend
 acceptance layout, not arbitrary production workloads.
 
 The initial three-minute calibration completed 5,394 cycles in 180.060 seconds, about 89.91 main RPC/second, with zero failures and UNKNOWN outcomes. Its cycle p99 histogram upper bound was 50 ms. Peak sampled Weir CPU was 0.0841 cores and memory 11.06 MiB; the Elasticsearch fixture peaked at 946.1 MiB. This supports freezing the selected 90 RPC/second, cycle p99 <= 500 ms, and 98% completion thresholds for the formal run; it does not establish maximum capacity.

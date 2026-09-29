@@ -113,7 +113,7 @@ func (e *apiStatusError) Error() string {
 }
 
 type samplingWindow struct {
-	Baseline record
+	Baseline *record
 	Deadline time.Time
 	Output   *os.File
 }
@@ -186,8 +186,9 @@ func (o *observer) sample(ctx context.Context) (record, error) {
 	return result, err
 }
 
-// sampleWithin never renews the gap budget after a transient metrics API failure.
-// The deadline includes HTTP, retry waits, validation and durable output.
+// sampleWithin accepts only a complete healthy sample inside one fixed window.
+// Startup uses its original 30s window; later windows use the preceding accepted
+// sample's monotonic start plus the frozen interval and 30s allowance.
 func (o *observer) sampleWithin(ctx context.Context, window samplingWindow) (record, time.Time, error) {
 	ctx, cancel := context.WithDeadline(ctx, window.Deadline)
 	defer cancel()
@@ -197,14 +198,47 @@ func (o *observer) sampleWithin(ctx context.Context, window samplingWindow) (rec
 	retries := 0
 	for {
 		sampleTime := time.Now()
+		var current record
+		if !sampleTime.Before(window.Deadline) {
+			return current, sampleTime, context.DeadlineExceeded
+		}
 		current, err := o.sample(ctx)
 		var status *apiStatusError
-		if errors.As(err, &status) && status.Path == usagePath && status.Status == http.StatusServiceUnavailable {
-			if err := validate(current, window.Baseline, o.Settings.Replicas); err != nil {
+		unavailableAPI := errors.As(err, &status) && status.Path == usagePath && status.Status == http.StatusServiceUnavailable
+		if err != nil && !unavailableAPI {
+			return current, sampleTime, err
+		}
+		baseline := current
+		if window.Baseline != nil {
+			baseline = *window.Baseline
+		}
+		// Lifecycle failures always take precedence over temporarily absent usage.
+		if err := validate(current, baseline, o.Settings.Replicas); err != nil {
+			return current, sampleTime, err
+		}
+		if window.Baseline == nil {
+			if err := baselineRunning(current); err != nil {
 				return current, sampleTime, err
 			}
+		}
+		current.UTC = time.Now().UTC()
+		if err == nil {
+			err = validateUsage(current)
+		}
+		var unavailableUsage *usageUnavailableError
+		if err != nil && !unavailableAPI && !errors.As(err, &unavailableUsage) {
+			return current, sampleTime, err
+		}
+		if err != nil {
 			retries++
-			audit := map[string]any{"kind": "metrics_api_retry", "utc": time.Now().UTC(), "attempt": retries, "status": status.Status, "elapsed_ns": time.Since(started).Nanoseconds(), "attempt_elapsed_ns": time.Since(sampleTime).Nanoseconds(), "remaining_ns": max(0, time.Until(window.Deadline).Nanoseconds())}
+			audit := map[string]any{"kind": "sample_retry", "utc": current.UTC, "attempt": retries, "elapsed_ns": time.Since(started).Nanoseconds(), "attempt_elapsed_ns": time.Since(sampleTime).Nanoseconds(), "remaining_ns": max(0, time.Until(window.Deadline).Nanoseconds())}
+			if unavailableAPI {
+				audit["reason"] = "metrics_api_unavailable"
+				audit["http_status"] = status.Status
+			} else {
+				audit["reason"] = "usage_unavailable"
+				audit["issues"] = unavailableUsage.Issues
+			}
 			if err := encoder.Encode(audit); err != nil {
 				return current, sampleTime, err
 			}
@@ -220,23 +254,18 @@ func (o *observer) sampleWithin(ctx context.Context, window samplingWindow) (rec
 				continue
 			}
 		}
-		if err != nil {
-			return current, sampleTime, err
-		}
-		// Validate freshness when the complete HTTP sample is available, including
-		// time spent waiting for a successful response body.
-		current.UTC = time.Now().UTC()
-		if err := validate(current, window.Baseline, o.Settings.Replicas); err != nil {
-			return current, sampleTime, err
-		}
-		if err := validateUsage(current); err != nil {
-			return current, sampleTime, err
-		}
 		if !time.Now().Before(window.Deadline) {
 			return current, sampleTime, context.DeadlineExceeded
 		}
+		if window.Baseline == nil {
+			for _, path := range []string{o.Settings.Report, o.Settings.ExitStatus} {
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					return current, sampleTime, errors.New("load evidence exists before observer readiness")
+				}
+			}
+		}
 		if retries > 0 {
-			audit := map[string]any{"kind": "metrics_api_recovered", "utc": time.Now().UTC(), "attempts": retries, "elapsed_ns": time.Since(started).Nanoseconds()}
+			audit := map[string]any{"kind": "sample_recovered", "utc": current.UTC, "attempts": retries, "elapsed_ns": time.Since(started).Nanoseconds()}
 			if err := encoder.Encode(audit); err != nil {
 				return current, sampleTime, err
 			}
@@ -244,11 +273,26 @@ func (o *observer) sampleWithin(ctx context.Context, window samplingWindow) (rec
 		if err := encoder.Encode(current); err != nil {
 			return current, sampleTime, err
 		}
+		if !time.Now().Before(window.Deadline) {
+			return current, sampleTime, context.DeadlineExceeded
+		}
 		if err := window.Output.Sync(); err != nil {
 			return current, sampleTime, err
 		}
 		if !time.Now().Before(window.Deadline) {
 			return current, sampleTime, context.DeadlineExceeded
+		}
+		// Persistence time also counts towards freshness and acceptance. A record
+		// alone is not success evidence without this run's heartbeat and terminal status.
+		current.UTC = time.Now().UTC()
+		if err := validateUsage(current); err != nil {
+			return current, sampleTime, err
+		}
+		if err := ctx.Err(); err != nil {
+			return current, sampleTime, err
+		}
+		if err := heartbeat(o.Settings.Output+".ready", window.Deadline); err != nil {
+			return current, sampleTime, err
 		}
 		return current, sampleTime, ctx.Err()
 	}
@@ -320,13 +364,41 @@ func validate(current, baseline record, replicas int) error {
 	return nil
 }
 
+type usageIssue struct {
+	Reason           string     `json:"reason"`
+	Pod              string     `json:"pod"`
+	PodUID           string     `json:"pod_uid"`
+	Container        string     `json:"container,omitempty"`
+	PodPresent       bool       `json:"pod_present"`
+	ContainerPresent bool       `json:"container_present"`
+	Timestamp        *time.Time `json:"timestamp,omitempty"`
+	AgeNS            int64      `json:"age_ns,omitempty"`
+	MissingFields    []string   `json:"missing_fields,omitempty"`
+}
+
+type usageUnavailableError struct {
+	Issues []usageIssue
+}
+
+var usageQuantity = regexp.MustCompile(`^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+|[numkKMGTPE]|[KMGTPE]i)?$`)
+
+func (e *usageUnavailableError) Error() string {
+	return fmt.Sprintf("Pod usage unavailable: %s for %s", e.Issues[0].Reason, e.Issues[0].Pod)
+}
+
 func validateUsage(current record) error {
 	var usage usageList
 	if err := json.Unmarshal(current.Usage, &usage); err != nil {
 		return err
 	}
+	if usage.Items == nil {
+		return errors.New("invalid Pod usage list: items missing or null")
+	}
 	byName := make(map[string]podUsage)
 	for _, item := range usage.Items {
+		if _, duplicate := byName[item.Metadata.Name]; duplicate || item.Metadata.Name == "" {
+			return errors.New("invalid Pod usage name: empty or duplicate")
+		}
 		byName[item.Metadata.Name] = item
 	}
 	expected := append([]pod(nil), current.Pods...)
@@ -335,22 +407,66 @@ func validateUsage(current record) error {
 			expected = append(expected, item)
 		}
 	}
+	unavailable := &usageUnavailableError{}
 	for _, item := range expected {
-		metric, ok := byName[item.Metadata.Name]
-		age := current.UTC.Sub(metric.Timestamp)
-		if !ok || age > 2*time.Minute || age < -30*time.Second || len(metric.Containers) != len(item.Status.Containers) {
-			return fmt.Errorf("missing or stale Pod usage: %s", item.Metadata.Name)
+		metric, present := byName[item.Metadata.Name]
+		issue := usageIssue{Pod: item.Metadata.Name, PodUID: item.Metadata.UID, PodPresent: present}
+		if !present {
+			issue.Reason = "missing_pod"
+			unavailable.Issues = append(unavailable.Issues, issue)
+			continue
+		}
+		if metric.Timestamp.IsZero() {
+			issue.Reason = "missing_timestamp"
+			unavailable.Issues = append(unavailable.Issues, issue)
+		} else {
+			issue.Timestamp = &metric.Timestamp
+			age := current.UTC.Sub(metric.Timestamp)
+			issue.AgeNS = age.Nanoseconds()
+			if age < -30*time.Second {
+				return fmt.Errorf("invalid future Pod usage timestamp: %s at %s", item.Metadata.Name, metric.Timestamp.Format(time.RFC3339Nano))
+			}
+			if age > 2*time.Minute {
+				issue.Reason = "stale_pod"
+				unavailable.Issues = append(unavailable.Issues, issue)
+			}
 		}
 		containers := make(map[string]containerUsage)
+		expectedNames := make(map[string]bool)
+		for _, container := range item.Status.Containers {
+			expectedNames[container.Name] = true
+		}
 		for _, container := range metric.Containers {
+			if _, duplicate := containers[container.Name]; duplicate || !expectedNames[container.Name] {
+				return fmt.Errorf("invalid Pod usage container: %s/%s", item.Metadata.Name, container.Name)
+			}
 			containers[container.Name] = container
 		}
 		for _, container := range item.Status.Containers {
-			value, ok := containers[container.Name]
-			if !ok || value.Usage["cpu"] == "" || value.Usage["memory"] == "" {
-				return fmt.Errorf("incomplete container usage: %s", item.Metadata.Name)
+			value, present := containers[container.Name]
+			issue.Container = container.Name
+			issue.ContainerPresent = present
+			issue.MissingFields = nil
+			if !present {
+				issue.Reason = "missing_container"
+				unavailable.Issues = append(unavailable.Issues, issue)
+				continue
+			}
+			for _, field := range []string{"cpu", "memory"} {
+				if value.Usage[field] == "" {
+					issue.MissingFields = append(issue.MissingFields, field)
+				} else if !usageQuantity.MatchString(value.Usage[field]) {
+					return fmt.Errorf("invalid Pod usage quantity: %s/%s %s", item.Metadata.Name, container.Name, field)
+				}
+			}
+			if len(issue.MissingFields) > 0 {
+				issue.Reason = "incomplete_container"
+				unavailable.Issues = append(unavailable.Issues, issue)
 			}
 		}
+	}
+	if len(unavailable.Issues) > 0 {
+		return unavailable
 	}
 	return nil
 }
@@ -399,7 +515,10 @@ func syncDirectory(path string) error {
 	return directory.Sync()
 }
 
-func heartbeat(path string) error {
+func heartbeat(path string, deadline time.Time) error {
+	if !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
 	temp, err := os.CreateTemp(filepath.Dir(path), "heartbeat-")
 	if err != nil {
 		return err
@@ -416,10 +535,19 @@ func heartbeat(path string) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
+	if !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
 	if err := os.Rename(temp.Name(), path); err != nil {
 		return err
 	}
-	return syncDirectory(path)
+	if err := syncDirectory(path); err != nil {
+		return err
+	}
+	if !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
 }
 
 func verifyLoad(cfg settings) error {
@@ -492,90 +620,32 @@ func (o *observer) run(ctx context.Context) error {
 	if err := encoder.Encode(o.Settings); err != nil {
 		return err
 	}
-	baselineContext, cancelBaseline := context.WithTimeout(ctx, 30*time.Second)
-	defer cancelBaseline()
-	var baseline record
-	var previous time.Time
-	for {
-		previous = time.Now()
-		baseline, err = o.sample(baselineContext)
-		if err != nil {
-			return err
-		}
-		if err := validate(baseline, baseline, o.Settings.Replicas); err != nil {
-			return err
-		}
-		if err := baselineRunning(baseline); err != nil {
-			return err
-		}
-		usageErr := validateUsage(baseline)
-		if usageErr == nil {
-			break
-		}
-		wait := map[string]any{"kind": "baseline_wait", "utc": time.Now().UTC(), "error": usageErr.Error()}
-		if err := encoder.Encode(wait); err != nil {
-			return err
-		}
-		if err := output.Sync(); err != nil {
-			return err
-		}
-		if baselineContext.Err() != nil {
-			return fmt.Errorf("initial Pod metrics not ready within 30 seconds: %w", usageErr)
-		}
-		timer := time.NewTimer(time.Second)
-		select {
-		case <-baselineContext.Done():
-			timer.Stop()
-			return baselineContext.Err()
-		case <-timer.C:
-		}
-	}
-	cancelBaseline()
-	if err := encoder.Encode(baseline); err != nil {
+	window := samplingWindow{Deadline: time.Now().Add(30 * time.Second), Output: output}
+	baseline, sampleTime, err := o.sampleWithin(ctx, window)
+	if err != nil {
 		return err
-	}
-	if err := output.Sync(); err != nil {
-		return err
-	}
-	for _, path := range []string{o.Settings.Report, o.Settings.ExitStatus} {
-		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-			return errors.New("load evidence exists before observer readiness")
-		}
 	}
 	current := baseline
-	sampleTime := previous
-	deadline := previous.Add(o.Settings.Duration)
+	deadline := sampleTime.Add(o.Settings.Duration)
 	for {
-		if err := validate(current, baseline, o.Settings.Replicas); err != nil {
-			return err
-		}
-		if err := validateUsage(current); err != nil {
-			return err
-		}
-		if time.Now().Sub(previous) > o.Settings.Interval+30*time.Second {
-			return errors.New("observation gap exceeded frozen interval plus 30 seconds")
-		}
-		if err := heartbeat(o.Settings.Output + ".ready"); err != nil {
-			return err
-		}
-		if time.Now().Sub(previous) > o.Settings.Interval+30*time.Second {
-			return errors.New("observation gap exceeded while persisting heartbeat")
-		}
 		if current.Job.Status.Succeeded == 1 && current.LoadPods[0].Status.Phase == "Succeeded" {
 			return verifyLoad(o.Settings)
 		}
-		if time.Now().After(deadline) {
+		if !time.Now().Before(deadline) {
 			return errors.New("observer deadline reached before load completion")
 		}
-		previous = sampleTime
-		timer := time.NewTimer(time.Until(previous.Add(o.Settings.Interval)))
+		timer := time.NewTimer(time.Until(sampleTime.Add(o.Settings.Interval)))
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return ctx.Err()
 		case <-timer.C:
 		}
-		window := samplingWindow{Baseline: baseline, Deadline: previous.Add(o.Settings.Interval + 30*time.Second), Output: output}
+		nextDeadline := sampleTime.Add(o.Settings.Interval + 30*time.Second)
+		if deadline.Before(nextDeadline) {
+			nextDeadline = deadline
+		}
+		window = samplingWindow{Baseline: &baseline, Deadline: nextDeadline, Output: output}
 		current, sampleTime, err = o.sampleWithin(ctx, window)
 		if err != nil {
 			return err
