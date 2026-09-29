@@ -250,7 +250,19 @@ func exclusiveResult(path string, body []byte) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	return os.Link(temp.Name(), path)
+	if err := os.Link(temp.Name(), path); err != nil {
+		return err
+	}
+	return syncDirectory(path)
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func heartbeat(path string) error {
@@ -270,7 +282,10 @@ func heartbeat(path string) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temp.Name(), path)
+	if err := os.Rename(temp.Name(), path); err != nil {
+		return err
+	}
+	return syncDirectory(path)
 }
 
 func verifyLoad(cfg settings) error {
