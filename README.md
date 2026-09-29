@@ -105,3 +105,12 @@ security and rollout contracts, and creates a chart archive. After validation, a
 must match Chart.yaml. Release archives are immutable inputs for consumers.
 Real install/upgrade/rollback and backend evidence belong in the acceptance report;
 short tests do not establish a capacity SLO or a 24-hour soak result.
+
+The optional fixed-layout soak observer requires explicit context, namespace, Job,
+and a new output file. It is read-only and does not read Secrets or restart failed
+workloads:
+
+```sh
+python3 scripts/observe-soak.py --context your-context --namespace acceptance \
+  --job weir-soak-24h --output /absolute/new-run/observations.jsonl
+```

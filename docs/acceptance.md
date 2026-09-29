@@ -1,20 +1,84 @@
 # Acceptance evidence
 
-Date: 2026-09-29. Work in progress; this document does not declare production qualification.
+Date: 2026-09-29. This is an evidence record, not an overall production qualification declaration.
 
-Chart schema, lint, template, and five behavior/negative test groups pass locally
-with Helm 3.17.0 and Python 3.14/PyYAML 6.0.2. Default security contexts, config
-revision rollout, digest selection, lifecycle probes, external Secret boundary,
-NetworkPolicy destinations, PDB, and invalid values are checked.
+## Chart checks
 
-A dedicated `weir-acceptance-20260929` namespace on the existing EKS cluster is used
-for real install, backend, SDK, lifecycle, and rollback checks. Kubernetes is
-v1.36.3-eks-cb19647 on native Linux arm64. Only new task-owned resources are mutated.
-No existing Secret content is read. Temporary MongoDB 8.0.32 and Elasticsearch
-8.19.22 use disposable data and do not represent production database durability.
+Helm 3.17.0 and Python/PyYAML 6.0.2 pass strict lint for default and Mongo example
+values, template rendering, and nine behavior/negative test groups. Tests cover
+restricted containers, external Secret handling, config checksum rollouts,
+readiness/liveness, digest selection, deny-by-default network destinations, PDB,
+Recreate, metrics opt-in, invalid values, release publication errors, and soak
+observer failure handling. GitHub CI repeats these checks and packages the chart.
+Release preflight requires a reviewed main ancestor and explicit authenticated
+HTTP 404 evidence that the GitHub and OCI versions are unused. Auth/network errors
+fail closed.
 
-The cluster's AWS VPC CNI node agent has `--enable-network-policy=false`. Network
-isolation is an open deployment gate: a namespace and successfully created policies
-alone do not isolate traffic. Shared CNI configuration is not changed by this work.
-The final image digest, precise commands/results, and outstanding scope will be
-recorded after runtime validation and the coordinated product release.
+## Real cluster, initial product image
+
+The dedicated acceptance namespace runs on EKS Kubernetes v1.36.3-eks-cb19647,
+native Linux arm64, kernel 6.12.77. Three Weir replicas each request/limit 2 CPU /
+1 GiB with a 768 MiB process budget and Local concurrency 2. All three became Ready
+on three distinct EC2 workers, with zero container restarts in the successful
+revision. Ordinary scheduling and the cluster's existing scaling resolved capacity;
+no node pool, autoscaler, or existing application was changed.
+
+Initial immutable image:
+`ghcr.io/batchstream/weir@sha256:aee0c24fd5a0edbe81d335522e2741b34ca267f8246c893e15d6ef0097c18bb4`,
+source `278264db2f9617ad583c6b56d19b8aaf5943e771`.
+Temporary backends are MongoDB 8.0.32, one-member replica set with a pre-created
+collection, and Elasticsearch 8.19.22, one shard/no replicas, pre-created index,
+`action.auto_create_index=false`. Their disposable emptyDir data is only a test
+fixture; it does not demonstrate production database durability or failover.
+
+Server-side dry-run and Helm installation passed. SDK head `88dc043` exercised all
+five RPCs against both real backends with the race detector: Mongo 3.93 seconds,
+Search 4.10 seconds, total test process 9.64 seconds. It covered duplicate Create,
+Read, Put/Replace, atomic expressions, ordered mixed Bulk, bounded Scan, Native,
+and Delete followed by missing Read. Test-owned records were cleaned up.
+
+The chart scaled 3 -> 1 successfully, then Helm rollback restored 3 Ready replicas.
+A separate checksum-triggered configuration rollout changed process memory budget
+768 -> 640 MiB while keeping resource limits constant; rollback restores the prior
+config/image pair. These checks establish static config/lifecycle behavior, not a
+zero-interruption guarantee for long-lived streams or cross-version compatibility.
+
+A paused Elasticsearch server JVM produced an explicit UNAVAILABLE Read failure
+in about 3.11 seconds while Weir's readiness probe remained successful. Resuming
+the JVM restored a successful Read in about 1.16 seconds, without restarting Weir.
+The first fault-fixture attempt paused PID 1 (`tini`) rather than the server JVM,
+so the backend still answered; it was resumed and that attempt is not qualification
+evidence. The verified server JVM PID was then used. No acknowledged data was lost
+or uncertain mutation replayed in this read-only recovery check.
+
+The first install also exposed two fixture problems: a temporary explicit hostname
+restriction became unschedulable as shared workload allocation changed, and the
+Search fixture omitted the required `action.auto_create_index=false`. The original
+failed Helm revision and startup failures remain in the local receipt/history;
+removing that artificial scheduling restriction and fixing only the test backend
+produced the successful revision. These failures are not rewritten as passes.
+
+## Network boundary and remaining evidence
+
+The AWS VPC CNI agent was installed with enforcement disabled. A controller-owned
+Job with an explicit deny-all egress policy still reached the test backend. This
+is a failed isolation gate. The reviewed shared-CNI plan and rollback limitations
+are recorded in [network-policy-enforcement.md](network-policy-enforcement.md).
+Shared network changes require separate cluster-owner approval. A namespace alone
+is not isolation. The task's policies now deny ingress by default and separately
+allow selected clients/Weir to the necessary ports, ready for an enforced retest.
+
+The final stable product image must replace the initial image before final SDK,
+upgrade, and metrics validation. The release OCI archive must be fetched and
+installed from its published location. The 24-hour load run starts only after the
+final versions and configuration are fixed and fault/rollout checks have ended.
+A zero-retry Job writes JSONL and exit status to a dedicated 1 GiB gp3 result PVC.
+`scripts/observe-soak.py` records each minute's exact Pod/Job identities, restart
+counts, container state, and Kubernetes CPU/memory usage; it fails on unexpected
+replacement, restart, readiness loss, Job failure, or missing metrics evidence.
+Its output path must be new. The observer targets this fixed three-Weir/two-backend
+acceptance layout, not arbitrary production workloads.
+
+No short test establishes a calibrated throughput/latency SLO, 70%-capacity soak,
+all-platform qualification, multi-member database failover, or a completed 24-hour
+run. Those gates remain explicit in upstream production qualification records.

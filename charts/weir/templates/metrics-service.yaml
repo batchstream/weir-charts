@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "weir.fullname" . }}-metrics
+  name: {{ printf "%s-metrics" (include "weir.fullname" . | trunc 55 | trimSuffix "-") }}
   labels:
     {{- include "weir.labels" . | nindent 4 }}
   {{- with .Values.metrics.annotations }}

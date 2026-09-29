@@ -34,7 +34,8 @@ def main():
     if status != 404:
         raise RuntimeError("release must be absent (HTTP 404); observed HTTP " + str(status))
     auth = base64.b64encode((actor + ":" + token).encode()).decode()
-    query = urllib.parse.urlencode({"service": "ghcr.io", "scope": "repository:batchstream/charts/weir:pull,push"})
+    query_values = {"service": "ghcr.io", "scope": "repository:batchstream/charts/weir:pull,push"}
+    query = urllib.parse.urlencode(query_values)
     auth_headers = {"Authorization": "Basic " + auth}
     status, body = request("https://ghcr.io/token?" + query, auth_headers)
     if status != 200:
