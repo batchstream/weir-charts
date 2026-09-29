@@ -19,6 +19,8 @@ def render(cfg):
         if not re.fullmatch(r'[0-9a-f]{64}', cfg[key]):
             raise ValueError('invalid binary hash: ' + key)
     run = cfg['run']
+    if not run.startswith('weir-soak-'):
+        raise ValueError('run must use the SDK-owned weir-soak- prefix')
     labels = {'weir.batchstream.io/owner': cfg['owner']}
     namespace = cfg['namespace']
     service_account = 'weir-soak-observer'

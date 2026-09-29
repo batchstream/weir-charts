@@ -33,6 +33,10 @@ class AcceptanceTests(unittest.TestCase):
         rules = rendered['resources']['items'][1]['rules']
         self.assertEqual({item for rule in rules for item in rule['resources']}, {'pods', 'jobs'})
         self.assertEqual({item for rule in rules for item in rule['verbs']}, {'get', 'list'})
+        cfg['run'] = 'invalid-run-prefix'
+        with self.assertRaises(ValueError):
+            MODULE.render(cfg)
+        cfg['run'] = 'weir-soak-run'
         cfg['runnerSHA256'] = 'REPLACE_WITH_HASH'
         with self.assertRaises(ValueError):
             MODULE.render(cfg)

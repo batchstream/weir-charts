@@ -14,7 +14,7 @@ no cluster policies. A temporary telemetry allow-all policy can preserve its
 currently effective connectivity while enforcement is activated for the test
 namespace; this does not qualify telemetry's existing policy design.
 
-No shared setting changes without the cluster owner's approval. The rollout must
+The user declined changing shared CNI for this task. No shared setting or telemetry policy was changed; the isolation gate remains blocked. The following plan is retained for a separately authorized remediation. The rollout must
 observe addon and aws-node health, preserve telemetry readiness, and then verify
 both allowed SDK/backend/DNS traffic and denied unlabeled/direct-IP traffic. Check
 that additive allow policies do not undermine specific restrictions. Standard mode

@@ -20,7 +20,10 @@ Helm retains values in release history. Non-secret test configuration can use
 `config.data` with `config.existingSecret: ""`.
 
 ```sh
-helm upgrade --install weir oci://ghcr.io/batchstream/charts/weir   --version 0.1.0 --namespace your-namespace --kube-context your-context   -f your-reviewed-values.yaml --atomic --wait --timeout 3m
+helm upgrade --install weir \
+  https://github.com/batchstream/weir-charts/releases/download/weir-0.1.0/weir-0.1.0.tgz \
+  --namespace your-namespace --kube-context your-context \
+  -f your-reviewed-values.yaml --atomic --wait --timeout 5m
 ```
 
 For a checked-out chart, replace the archive URL with `./charts/weir`. Configure
@@ -107,11 +110,4 @@ must match Chart.yaml. Release archives are immutable inputs for consumers.
 Real install/upgrade/rollback and backend evidence belong in the acceptance report;
 short tests do not establish a capacity SLO or a 24-hour soak result.
 
-The optional fixed-layout soak observer requires explicit context, namespace, Job,
-and a new output file. It is read-only and does not read Secrets or restart failed
-workloads:
-
-```sh
-python3 scripts/observe-soak.py --context your-context --namespace acceptance \
-  --job weir-soak-24h --output /absolute/new-run/observations.jsonl
-```
+The [persistent acceptance fixtures](tests/acceptance/README.md) build the fixed-layout Go observer and coordinate it with the SDK soak runner using a shared result PVC. The observer uses only namespace-scoped read permissions; it never reads Secrets or restarts failed workloads. The older local Python sampler is useful for short calibration only, since it depends on the operator machine remaining connected.
