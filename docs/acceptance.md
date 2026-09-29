@@ -5,7 +5,7 @@ Date: 2026-09-29. This is an evidence record, not an overall production qualific
 ## Chart checks
 
 Helm 3.17.0 and Python/PyYAML 6.0.2 pass strict lint for default and Mongo example
-values, template rendering, and nine behavior/negative test groups. Tests cover
+values, template rendering, and ten Python behavior/negative test groups plus Go observer race tests. Tests cover
 restricted containers, external Secret handling, config checksum rollouts,
 readiness/liveness, digest selection, deny-by-default network destinations, PDB,
 Recreate, metrics opt-in, invalid values, release publication errors, and soak
@@ -64,7 +64,7 @@ The AWS VPC CNI agent was installed with enforcement disabled. A controller-owne
 Job with an explicit deny-all egress policy still reached the test backend. This
 is a failed isolation gate. The reviewed shared-CNI plan and rollback limitations
 are recorded in [network-policy-enforcement.md](network-policy-enforcement.md).
-Shared network changes require separate cluster-owner approval. A namespace alone
+The user explicitly declined modifying shared CNI for this task; this gate remains failed and the plan is retained without execution. A namespace alone
 is not isolation. The task's policies now deny ingress by default and separately
 allow selected clients/Weir to the necessary ports, ready for an enforced retest.
 
@@ -73,12 +73,13 @@ upgrade, and metrics validation. The release OCI archive must be fetched and
 installed from its published location. The 24-hour load run starts only after the
 final versions and configuration are fixed and fault/rollout checks have ended.
 A zero-retry Job writes JSONL and exit status to a dedicated 1 GiB gp3 result PVC.
-`scripts/observe-soak.py` records each minute's exact Pod/Job identities, restart
-counts, container state, and Kubernetes CPU/memory usage; it fails on unexpected
-replacement, restart, readiness loss, Job failure, or missing metrics evidence.
-Its output path must be new. The observer targets this fixed three-Weir/two-backend
+`scripts/observe-soak.go` runs independently in the cluster and records each minute's exact Pod/Job identities, container image IDs, restart counts, readiness, Kubernetes CPU/memory usage and Weir metrics to the persistent volume. It fails on unexpected replacement, restart, readiness loss, Job failure, scrape/API errors or an excessive observation gap. The SDK watchdog cancels load if the observer fails or its heartbeat stops. Final success additionally verifies the durable runner `passed` record, exact run ID/duration, zero errors/UNKNOWN and exit code zero. Its output path must be new. See [the reproducible run templates](../tests/acceptance/README.md). The initial local Python sampler was calibration support only. The observer targets this fixed three-Weir/two-backend
 acceptance layout, not arbitrary production workloads.
 
-No short test establishes a calibrated throughput/latency SLO, 70%-capacity soak,
+The initial three-minute calibration completed 5,394 cycles in 180.060 seconds, about 89.91 main RPC/second, with zero failures and UNKNOWN outcomes. Its cycle p99 histogram upper bound was 50 ms. Peak sampled Weir CPU was 0.0841 cores and memory 11.06 MiB; the Elasticsearch fixture peaked at 946.1 MiB. This supports freezing the selected 90 RPC/second, cycle p99 <= 500 ms, and 98% completion thresholds for the formal run; it does not establish maximum capacity.
+
+After calibration ended, ordinary shared node scale-down replaced one Weir Pod and made a hostname-pinned results reader unschedulable. The reader is allowed to reschedule in the PVC zone; only this task's fixed-run Pods use `cluster-autoscaler.kubernetes.io/safe-to-evict: false` before taking a new baseline. An initial observer carrier timed out waiting for its binary and never executed the observer; it is preserved as fixture setup history, not a product pass or failure. All final binaries and hashes are prepared before the next paired run.
+
+No short test establishes a 70%-capacity soak,
 all-platform qualification, multi-member database failover, or a completed 24-hour
 run. Those gates remain explicit in upstream production qualification records.

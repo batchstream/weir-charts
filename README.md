@@ -23,7 +23,7 @@ Helm retains values in release history. Non-secret test configuration can use
 helm upgrade --install weir oci://ghcr.io/batchstream/charts/weir   --version 0.1.0 --namespace your-namespace --kube-context your-context   -f your-reviewed-values.yaml --atomic --wait --timeout 3m
 ```
 
-For a checked-out chart, replace the OCI argument with `./charts/weir`. Configure
+For a checked-out chart, replace the archive URL with `./charts/weir`. Configure
 `config.existingSecret`, precise `networkPolicy.ingress` and `networkPolicy.egress`
 in your values. The default permits only same-namespace Pods labeled
 `weir-client: "true"` to call port 7447 and DNS egress to kube-system/kube-dns.
@@ -101,7 +101,8 @@ make package PYTHON=.venv/bin/python
 
 Changes reach main only through a reviewed PR. CI validates schema/negative cases,
 security and rollout contracts, and creates a chart archive. After validation, a
-`weir-0.1.0` tag publishes the OCI chart and a GitHub release archive; its version
+`weir-0.1.0` tag publishes the OCI chart and a public GitHub release archive with
+SHA256SUMS; its version
 must match Chart.yaml. Release archives are immutable inputs for consumers.
 Real install/upgrade/rollback and backend evidence belong in the acceptance report;
 short tests do not establish a capacity SLO or a 24-hour soak result.
