@@ -84,6 +84,33 @@ Final three-Pod qualification uses SDK v0.1.1's fixed-target runner, six workers
 and one Mongo plus one Search worker on each of three frozen Pod IPs. The original
 Service-based evidence remains separate.
 
+The final targeted paired run passed on SDK v0.1.1, source
+`8f3462ef65d0ff587d58b489b6a8b48183531362`, with the same stable server image.
+Three Weir Pods ran on three distinct ON_DEMAND workers, each at 2 CPU / 1 GiB.
+The task selected existing compatible capacity through its own Pod selector; the
+existing cluster autoscaler expanded an existing node group under its existing
+limits. No node group, ASG, taint or shared autoscaler configuration was changed.
+Earlier node shutdown/replacement was observed, but its initiating cause was not
+established; using ON_DEMAND does not guarantee that nodes will never be replaced.
+
+The run started at 2026-09-29T02:28:22.508225981Z and passed after 180.040095302 s:
+5,394 cycles, 10,788 verified mutations, 10,788 verified reads, six stream checks,
+zero failures/UNKNOWN, and cycle p99 histogram upper bound 20 ms. Each Pod had one
+Mongo and one Search worker; their RPC completion deltas were 5,406 / 5,406 / 5,400.
+Eight durable observer samples covered the baseline through terminal completion,
+with unchanged UIDs/image IDs, zero restarts, complete fresh per-container usage
+and successful metrics scrapes. The load status was exit zero, both Jobs succeeded,
+and the independent observer recorded `passed: true` at 02:31:51.877200368Z.
+
+The SDK runner binary SHA256 was
+`a5c63081cfdef682e7d2f194f1f256b0190f7b0a377e2929117ef1fa916d93d5`;
+the observer binary SHA256 was
+`01ea665b28887527cefb780cab03fa4b374537a37415a372eabd73d7824055fa`.
+All 23 historical and current result files were exported using hard-link
+dereferencing and verified against checksums generated on the PVC. An earlier
+plain `kubectl cp` export lost hard-linked status payloads; that export is obsolete
+and the verified replacement retains the actual terminal evidence.
+
 The results PVC survived ordinary removal of its original node. After attachment
 on another worker, the initial calibration JSONL SHA256 still matched its prior
 local export: `dca2992ca10e2c90ae8aa5f5b4550f8b8d3ecb80c69678df0f4b4d2cad9b48df`.
