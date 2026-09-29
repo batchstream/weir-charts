@@ -97,8 +97,25 @@ type settings struct {
 	LoadDuration   time.Duration `json:"loadDuration"`
 }
 type observer struct {
-	Client   *http.Client
-	Settings settings
+	Client    *http.Client
+	Settings  settings
+	APIURL    string
+	TokenFile string
+}
+
+type apiStatusError struct {
+	Path   string
+	Status int
+}
+
+func (e *apiStatusError) Error() string {
+	return fmt.Sprintf("Kubernetes read %s returned HTTP %d", e.Path, e.Status)
+}
+
+type samplingWindow struct {
+	Baseline record
+	Deadline time.Time
+	Output   *os.File
 }
 
 const account = "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -106,11 +123,11 @@ const account = "/var/run/secrets/kubernetes.io/serviceaccount"
 func (o *observer) get(ctx context.Context, path string, target any) error {
 	// This newly projected task ServiceAccount token rotates during a 24-hour run.
 	// Read it only inside the observer; never record it or grant Secret permissions.
-	token, err := os.ReadFile(filepath.Join(account, "token"))
+	token, err := os.ReadFile(o.TokenFile)
 	if err != nil || len(token) > 16384 {
 		return errors.New("projected task token unavailable")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://kubernetes.default.svc"+path, nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, o.APIURL+path, nil)
 	if err != nil {
 		return err
 	}
@@ -121,7 +138,8 @@ func (o *observer) get(ctx context.Context, path string, target any) error {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("Kubernetes read %s returned HTTP %d", path, response.StatusCode)
+		failure := &apiStatusError{Path: path, Status: response.StatusCode}
+		return failure
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 8<<20))
 	return decoder.Decode(target)
@@ -166,6 +184,71 @@ func (o *observer) sample(ctx context.Context) (record, error) {
 	}
 	err := o.get(ctx, "/apis/metrics.k8s.io/v1beta1/namespaces/"+o.Settings.Namespace+"/pods", &result.Usage)
 	return result, err
+}
+
+// sampleWithin never renews the gap budget after a transient metrics API failure.
+// The deadline includes HTTP, retry waits, validation and durable output.
+func (o *observer) sampleWithin(ctx context.Context, window samplingWindow) (record, time.Time, error) {
+	ctx, cancel := context.WithDeadline(ctx, window.Deadline)
+	defer cancel()
+	encoder := json.NewEncoder(window.Output)
+	started := time.Now()
+	usagePath := "/apis/metrics.k8s.io/v1beta1/namespaces/" + o.Settings.Namespace + "/pods"
+	retries := 0
+	for {
+		sampleTime := time.Now()
+		current, err := o.sample(ctx)
+		var status *apiStatusError
+		if errors.As(err, &status) && status.Path == usagePath && status.Status == http.StatusServiceUnavailable {
+			if err := validate(current, window.Baseline, o.Settings.Replicas); err != nil {
+				return current, sampleTime, err
+			}
+			retries++
+			audit := map[string]any{"kind": "metrics_api_retry", "utc": time.Now().UTC(), "attempt": retries, "status": status.Status, "elapsed_ns": time.Since(started).Nanoseconds(), "attempt_elapsed_ns": time.Since(sampleTime).Nanoseconds(), "remaining_ns": max(0, time.Until(window.Deadline).Nanoseconds())}
+			if err := encoder.Encode(audit); err != nil {
+				return current, sampleTime, err
+			}
+			if err := window.Output.Sync(); err != nil {
+				return current, sampleTime, err
+			}
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return current, sampleTime, ctx.Err()
+			case <-timer.C:
+				continue
+			}
+		}
+		if err != nil {
+			return current, sampleTime, err
+		}
+		if err := validate(current, window.Baseline, o.Settings.Replicas); err != nil {
+			return current, sampleTime, err
+		}
+		if err := validateUsage(current); err != nil {
+			return current, sampleTime, err
+		}
+		if !time.Now().Before(window.Deadline) {
+			return current, sampleTime, context.DeadlineExceeded
+		}
+		if retries > 0 {
+			audit := map[string]any{"kind": "metrics_api_recovered", "utc": time.Now().UTC(), "attempts": retries, "elapsed_ns": time.Since(started).Nanoseconds()}
+			if err := encoder.Encode(audit); err != nil {
+				return current, sampleTime, err
+			}
+		}
+		if err := encoder.Encode(current); err != nil {
+			return current, sampleTime, err
+		}
+		if err := window.Output.Sync(); err != nil {
+			return current, sampleTime, err
+		}
+		if !time.Now().Before(window.Deadline) {
+			return current, sampleTime, context.DeadlineExceeded
+		}
+		return current, sampleTime, ctx.Err()
+	}
 }
 
 func sameContainers(current, baseline pod) error {
@@ -466,7 +549,7 @@ func (o *observer) run(ctx context.Context) error {
 		if err := validateUsage(current); err != nil {
 			return err
 		}
-		if sampleTime.Sub(previous) > o.Settings.Interval+30*time.Second {
+		if time.Now().Sub(previous) > o.Settings.Interval+30*time.Second {
 			return errors.New("observation gap exceeded frozen interval plus 30 seconds")
 		}
 		if err := heartbeat(o.Settings.Output + ".ready"); err != nil {
@@ -486,15 +569,9 @@ func (o *observer) run(ctx context.Context) error {
 			return ctx.Err()
 		case <-timer.C:
 		}
-		sampleTime = time.Now()
-		current, err = o.sample(ctx)
+		window := samplingWindow{Baseline: baseline, Deadline: previous.Add(o.Settings.Interval + 30*time.Second), Output: output}
+		current, sampleTime, err = o.sampleWithin(ctx, window)
 		if err != nil {
-			return err
-		}
-		if err := encoder.Encode(current); err != nil {
-			return err
-		}
-		if err := output.Sync(); err != nil {
 			return err
 		}
 	}
@@ -537,7 +614,7 @@ func main() {
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
 	transport := &http.Transport{TLSClientConfig: tlsConfig}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
-	runner := observer{Client: client, Settings: cfg}
+	runner := observer{Client: client, Settings: cfg, APIURL: "https://kubernetes.default.svc", TokenFile: filepath.Join(account, "token")}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	err = runner.run(ctx)

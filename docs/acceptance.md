@@ -117,6 +117,42 @@ local export: `dca2992ca10e2c90ae8aa5f5b4550f8b8d3ecb80c69678df0f4b4d2cad9b48df`
 This establishes persistence of the acceptance record across that event, not
 production backend durability.
 
+## First formal 24-hour attempt: failed
+
+The first formal run used server v0.1.0, SDK v0.1.1 and Chart 0.1.0 with the
+fixed three-Pod targets above. It began at 2026-09-29T02:41:25.977370518Z and
+failed at 04:03:26.977973834Z after 4,921.000606088 seconds, well short of 24 hours.
+The observer's Pod usage metrics API request returned HTTP 503. It persisted a
+failed status and exited one; the SDK watchdog then canceled the load. The final
+load report contains 147,624 completed cycles, 295,248 verified mutations and
+295,248 verified reads, 162 stream checks, cycle p99 upper bound 20 ms, seven
+failures (one observer failure and six canceled workers), and zero UNKNOWN.
+Both original Jobs failed with exit one and zero restarts; neither was retried.
+
+Shared metrics-server had one replica. Cluster events show its old Pod stopping
+and losing readiness while a replacement started just before the failed request.
+A later replacement became Ready and the API answered successfully during the
+investigation. The duration and recovery time of the first outage, and the cause
+of the Pod replacements, were not established. This does not prove that retrying
+within the existing sampling budget would have recovered the failed run.
+
+All 82 pre-failure load progress records reported zero failures/UNKNOWN and cycle
+p99 at most 20 ms. The 82 complete observer samples ended one minute before the
+failure, with a maximum preceding sample gap of 60.05817 seconds. The three Weir
+Pods retained their original identities and were Ready during investigation;
+that snapshot does not prove uninterrupted data-plane availability after
+observation stopped. All seven result files were exported with hard-link
+dereferencing, matched against independent PVC checksums, and fully parsed,
+including both failed terminal statuses. The original failed evidence remains.
+
+The observer now permits only an explicit usage API HTTP 503 to retry within the
+remaining original sampling deadline, recording each attempt and resampling all
+state after recovery. The 90-second sample-gap, two-minute usage-age and
+150-second watchdog limits are unchanged. This tool correction requires a new
+run with its own identity and complete duration; it cannot reclassify this attempt
+as passed. Offline HTTP-boundary tests cover bounded recovery, exhausted budget,
+late response bodies, audit evidence and non-retryable failures.
+
 ## Network boundary and remaining evidence
 
 The AWS VPC CNI agent was installed with enforcement disabled. A controller-owned
@@ -131,7 +167,7 @@ The release OCI archive must be fetched and
 installed from its published location. The 24-hour load run starts only after the
 final versions and configuration are fixed and fault/rollout checks have ended.
 A zero-retry Job writes JSONL and exit status to a dedicated 1 GiB gp3 result PVC.
-`scripts/observe-soak.go` runs independently in the cluster and records each minute's exact Pod/Job identities, container image IDs, restart counts, readiness, Kubernetes CPU/memory usage and Weir metrics to the persistent volume. It fails on unexpected replacement, restart, readiness loss, Job failure, scrape/API errors or an excessive observation gap. The SDK watchdog cancels load if the observer fails or its heartbeat stops. Final success additionally verifies the durable runner `passed` record, exact run ID/duration, zero errors/UNKNOWN and exit code zero. Its output path must be new. See [the reproducible run templates](../tests/acceptance/README.md). The initial local Python sampler was calibration support only. The observer targets this fixed three-Weir/two-backend
+`scripts/observe-soak.go` runs independently in the cluster and records each minute's exact Pod/Job identities, container image IDs, restart counts, readiness, Kubernetes CPU/memory usage and Weir metrics to the persistent volume. It fails on unexpected replacement, restart, readiness loss, Job failure, scrape/API errors or an excessive observation gap, with only the bounded usage API HTTP 503 recovery described above. The SDK watchdog cancels load if the observer fails or its heartbeat stops. Final success additionally verifies the durable runner `passed` record, exact run ID/duration, zero errors/UNKNOWN and exit code zero. Its output path must be new. See [the reproducible run templates](../tests/acceptance/README.md). The initial local Python sampler was calibration support only. The observer targets this fixed three-Weir/two-backend
 acceptance layout, not arbitrary production workloads.
 
 The initial three-minute calibration completed 5,394 cycles in 180.060 seconds, about 89.91 main RPC/second, with zero failures and UNKNOWN outcomes. Its cycle p99 histogram upper bound was 50 ms. Peak sampled Weir CPU was 0.0841 cores and memory 11.06 MiB; the Elasticsearch fixture peaked at 946.1 MiB. This supports freezing the selected 90 RPC/second, cycle p99 <= 500 ms, and 98% completion thresholds for the formal run; it does not establish maximum capacity.
