@@ -469,7 +469,8 @@ def verify_lifecycle(cfg, options, files, run):
                 raise ValueError('worker ownership/cleanup sequence is invalid')
             destination.add(worker)
             integer(record['sequence'], 'sequence')
-            integer(record['duration_ns'], 'operation duration')
+            if 'duration_ns' in record:
+                integer(record['duration_ns'], 'operation duration')
             continue
         if kind not in ('progress', 'passed') or (kind == 'passed') != (index == len(load) - 1) or record.get('run_id') != cfg['run']:
             raise ValueError('unexpected runner record or failure tail')

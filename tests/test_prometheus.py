@@ -128,7 +128,8 @@ def bundle(directory, seconds=120):
                                          verified_reads=cycles*2, verified_mutations=cycles*2, stream_checks=2, cycle_histogram=[cycles]+[0]*11, cycle_overflow=0,
                                          failures=0, unknown=0, cycle_p99_upper_ns=20000000, interval_p99_upper_ns=20000000))
         for worker in range(6):
-            load_records.append(dict(kind=kind, worker=worker, target=run['targets'][worker%3], backend='mongo' if worker%2==0 else 'search', sequence=0, duration_ns=0))
+            # SDK v0.1.1 owned/cleaned events omit their zero duration via omitempty.
+            load_records.append(dict(kind=kind, worker=worker, target=run['targets'][worker%3], backend='mongo' if worker%2==0 else 'search', resource='weir://owned/records/worker-'+str(worker), sequence=0))
     last = dict(load_records[7])
     last.update(kind='passed', run_id=cfg['run'], utc=iso(end, PROM.timezone.utc).isoformat(), elapsed_ns=seconds*10**9, cycles=seconds*30,
                 verified_reads=seconds*60, verified_mutations=seconds*60, cycle_histogram=[seconds*30]+[0]*11)
@@ -315,3 +316,27 @@ class PrometheusTests(unittest.TestCase):
                 if mode == 'truncated-jsonl': options.load_report.write_text(options.load_report.read_text().rstrip())
                 with self.assertRaises((ValueError,KeyError,TypeError)):
                     PROM.audit(cfg, options)
+
+    def test_sdk_owned_cleaned_optional_duration_is_strict_when_present(self):
+        # Field sets from a verified successful SDK v0.1.1 report; identities are synthetic.
+        fields = {'backend', 'kind', 'resource', 'sequence', 'target', 'worker'}
+        for kind in ('owned', 'cleaned'):
+            for duration in (None, True, -1, 0.5, '0', float('nan'), 0, 1000):
+                with self.subTest(kind=kind, duration=duration), tempfile.TemporaryDirectory() as temporary:
+                    cfg, options = bundle(Path(temporary))
+                    records = [json.loads(line) for line in options.load_report.read_text().splitlines()]
+                    record = next(row for row in records if row.get('kind') == kind)
+                    self.assertEqual(set(record), fields)
+                    record['duration_ns'] = duration
+                    options.load_report.write_text(''.join(json.dumps(row)+'\n' for row in records))
+                    if type(duration) is int and duration >= 0:
+                        self.assertEqual(PROM.audit(cfg, options)['state'], 'passed')
+                    else:
+                        with self.assertRaises(ValueError): PROM.audit(cfg, options)
+            for missing in ('worker', 'target', 'backend', 'sequence'):
+                with self.subTest(kind=kind, missing=missing), tempfile.TemporaryDirectory() as temporary:
+                    cfg, options = bundle(Path(temporary))
+                    records = [json.loads(line) for line in options.load_report.read_text().splitlines()]
+                    del next(row for row in records if row.get('kind') == kind)[missing]
+                    options.load_report.write_text(''.join(json.dumps(row)+'\n' for row in records))
+                    with self.assertRaises(KeyError): PROM.audit(cfg, options)
