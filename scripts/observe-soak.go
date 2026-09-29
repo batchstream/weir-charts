@@ -11,7 +11,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -28,15 +27,21 @@ type metadata struct {
 	Labels map[string]string `json:"labels"`
 }
 type containerStatus struct {
+	Name        string          `json:"name"`
+	ContainerID string          `json:"containerID"`
+	Ready       bool            `json:"ready"`
+	Restarts    int             `json:"restartCount"`
+	ImageID     string          `json:"imageID"`
+	State       json.RawMessage `json:"state"`
+	LastState   json.RawMessage `json:"lastState"`
+}
+type podContainerSpec struct {
 	Name      string          `json:"name"`
-	Ready     bool            `json:"ready"`
-	Restarts  int             `json:"restartCount"`
-	ImageID   string          `json:"imageID"`
-	State     json.RawMessage `json:"state"`
-	LastState json.RawMessage `json:"lastState"`
+	Resources json.RawMessage `json:"resources"`
 }
 type podSpec struct {
-	NodeName string `json:"nodeName"`
+	NodeName   string             `json:"nodeName"`
+	Containers []podContainerSpec `json:"containers"`
 }
 type podStatus struct {
 	Phase      string            `json:"phase"`
@@ -61,40 +66,25 @@ type job struct {
 	Status   jobStatus `json:"status"`
 }
 type record struct {
-	UTC      time.Time         `json:"utc"`
-	Pods     []pod             `json:"pods"`
-	LoadPods []pod             `json:"loadPods"`
-	Job      job               `json:"job"`
-	Usage    json.RawMessage   `json:"usage"`
-	Metrics  map[string]string `json:"weirMetrics"`
-}
-type containerUsage struct {
-	Name  string            `json:"name"`
-	Usage map[string]string `json:"usage"`
-}
-type podUsage struct {
-	Metadata   metadata         `json:"metadata"`
-	Timestamp  time.Time        `json:"timestamp"`
-	Containers []containerUsage `json:"containers"`
-}
-type usageList struct {
-	Items []podUsage `json:"items"`
+	UTC      time.Time `json:"utc"`
+	Pods     []pod     `json:"pods"`
+	LoadPods []pod     `json:"loadPods"`
+	Job      job       `json:"job"`
 }
 
 type settings struct {
-	Namespace      string        `json:"namespace"`
-	Job            string        `json:"job"`
-	Release        string        `json:"release"`
-	Output         string        `json:"output"`
-	Interval       time.Duration `json:"interval"`
-	Duration       time.Duration `json:"duration"`
-	Replicas       int           `json:"replicas"`
-	MetricsPort    string        `json:"metricsPort"`
-	RequireMetrics bool          `json:"requireMetrics"`
-	Report         string        `json:"report"`
-	ExitStatus     string        `json:"exitStatus"`
-	RunID          string        `json:"runID"`
-	LoadDuration   time.Duration `json:"loadDuration"`
+	Namespace       string        `json:"namespace"`
+	RunConfigSHA256 string        `json:"runConfigSHA256"`
+	Job             string        `json:"job"`
+	Release         string        `json:"release"`
+	Output          string        `json:"output"`
+	Interval        time.Duration `json:"interval"`
+	Duration        time.Duration `json:"duration"`
+	Replicas        int           `json:"replicas"`
+	Report          string        `json:"report"`
+	ExitStatus      string        `json:"exitStatus"`
+	RunID           string        `json:"runID"`
+	LoadDuration    time.Duration `json:"loadDuration"`
 }
 type observer struct {
 	Client    *http.Client
@@ -146,7 +136,7 @@ func (o *observer) get(ctx context.Context, path string, target any) error {
 }
 
 func (o *observer) sample(ctx context.Context) (record, error) {
-	result := record{UTC: time.Now().UTC(), Metrics: make(map[string]string)}
+	result := record{UTC: time.Now().UTC()}
 	var pods podList
 	if err := o.get(ctx, "/api/v1/namespaces/"+o.Settings.Namespace+"/pods", &pods); err != nil {
 		return result, err
@@ -161,153 +151,72 @@ func (o *observer) sample(ctx context.Context) (record, error) {
 			continue
 		}
 		result.Pods = append(result.Pods, item)
-		if weir && o.Settings.RequireMetrics {
-			address := "http://" + net.JoinHostPort(item.Status.IP, o.Settings.MetricsPort) + "/metrics"
-			request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
-			if err != nil {
-				return result, err
-			}
-			response, err := o.Client.Do(request)
-			if err != nil {
-				return result, err
-			}
-			body, readErr := io.ReadAll(io.LimitReader(response.Body, (256<<10)+1))
-			response.Body.Close()
-			if readErr != nil || response.StatusCode != http.StatusOK || len(body) > 256<<10 || !strings.Contains(string(body), "\nweir_node_ready 1\n") {
-				return result, errors.New("Weir metrics scrape failed")
-			}
-			result.Metrics[item.Metadata.UID] = string(body)
-		}
 	}
 	if err := o.get(ctx, "/apis/batch/v1/namespaces/"+o.Settings.Namespace+"/jobs/"+o.Settings.Job, &result.Job); err != nil {
 		return result, err
 	}
-	err := o.get(ctx, "/apis/metrics.k8s.io/v1beta1/namespaces/"+o.Settings.Namespace+"/pods", &result.Usage)
-	return result, err
+	return result, nil
 }
 
-// sampleWithin accepts only a complete healthy sample inside one fixed window.
-// Startup uses its original 30s window; later windows use the preceding accepted
-// sample's monotonic start plus the frozen interval and 30s allowance.
+// sampleWithin keeps the original monotonic deadline across reads and durable
+// publication. Prometheus evidence is independently audited, never queried here.
 func (o *observer) sampleWithin(ctx context.Context, window samplingWindow) (record, time.Time, error) {
 	ctx, cancel := context.WithDeadline(ctx, window.Deadline)
 	defer cancel()
-	encoder := json.NewEncoder(window.Output)
-	started := time.Now()
-	usagePath := "/apis/metrics.k8s.io/v1beta1/namespaces/" + o.Settings.Namespace + "/pods"
-	retries := 0
-	for {
-		sampleTime := time.Now()
-		var current record
-		if !sampleTime.Before(window.Deadline) {
-			return current, sampleTime, context.DeadlineExceeded
-		}
-		current, err := o.sample(ctx)
-		var status *apiStatusError
-		unavailableAPI := errors.As(err, &status) && status.Path == usagePath && status.Status == http.StatusServiceUnavailable
-		if err != nil && !unavailableAPI {
-			return current, sampleTime, err
-		}
-		baseline := current
-		if window.Baseline != nil {
-			baseline = *window.Baseline
-		}
-		// Lifecycle failures always take precedence over temporarily absent usage.
-		if err := validate(current, baseline, o.Settings.Replicas); err != nil {
-			return current, sampleTime, err
-		}
-		if window.Baseline == nil {
-			if err := baselineRunning(current); err != nil {
-				return current, sampleTime, err
-			}
-		}
-		current.UTC = time.Now().UTC()
-		if err == nil {
-			err = validateUsage(current)
-		}
-		var unavailableUsage *usageUnavailableError
-		if err != nil && !unavailableAPI && !errors.As(err, &unavailableUsage) {
-			return current, sampleTime, err
-		}
-		if err != nil {
-			retries++
-			audit := map[string]any{"kind": "sample_retry", "utc": current.UTC, "attempt": retries, "elapsed_ns": time.Since(started).Nanoseconds(), "attempt_elapsed_ns": time.Since(sampleTime).Nanoseconds(), "remaining_ns": max(0, time.Until(window.Deadline).Nanoseconds())}
-			if unavailableAPI {
-				audit["reason"] = "metrics_api_unavailable"
-				audit["http_status"] = status.Status
-			} else {
-				audit["reason"] = "usage_unavailable"
-				audit["issues"] = unavailableUsage.Issues
-			}
-			if err := encoder.Encode(audit); err != nil {
-				return current, sampleTime, err
-			}
-			if err := window.Output.Sync(); err != nil {
-				return current, sampleTime, err
-			}
-			timer := time.NewTimer(time.Second)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return current, sampleTime, ctx.Err()
-			case <-timer.C:
-				continue
-			}
-		}
-		if !time.Now().Before(window.Deadline) {
-			return current, sampleTime, context.DeadlineExceeded
-		}
-		if window.Baseline == nil {
-			for _, path := range []string{o.Settings.Report, o.Settings.ExitStatus} {
-				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-					return current, sampleTime, errors.New("load evidence exists before observer readiness")
-				}
-			}
-		}
-		if retries > 0 {
-			audit := map[string]any{"kind": "sample_recovered", "utc": current.UTC, "attempts": retries, "elapsed_ns": time.Since(started).Nanoseconds()}
-			if err := encoder.Encode(audit); err != nil {
-				return current, sampleTime, err
-			}
-		}
-		if err := encoder.Encode(current); err != nil {
-			return current, sampleTime, err
-		}
-		if !time.Now().Before(window.Deadline) {
-			return current, sampleTime, context.DeadlineExceeded
-		}
-		if err := window.Output.Sync(); err != nil {
-			return current, sampleTime, err
-		}
-		if !time.Now().Before(window.Deadline) {
-			return current, sampleTime, context.DeadlineExceeded
-		}
-		// Persistence time also counts towards freshness and acceptance. A record
-		// alone is not success evidence without this run's heartbeat and terminal status.
-		current.UTC = time.Now().UTC()
-		if err := validateUsage(current); err != nil {
-			return current, sampleTime, err
-		}
-		if err := ctx.Err(); err != nil {
-			return current, sampleTime, err
-		}
-		if err := heartbeat(o.Settings.Output+".ready", window.Deadline); err != nil {
-			return current, sampleTime, err
-		}
-		return current, sampleTime, ctx.Err()
+	sampleTime := time.Now()
+	current, err := o.sample(ctx)
+	if err != nil {
+		return current, sampleTime, err
 	}
+	baseline := current
+	if window.Baseline != nil {
+		baseline = *window.Baseline
+	}
+	if err := validate(current, baseline, o.Settings.Replicas); err != nil {
+		return current, sampleTime, err
+	}
+	if window.Baseline == nil {
+		if err := baselineRunning(current); err != nil {
+			return current, sampleTime, err
+		}
+		for _, path := range []string{o.Settings.Report, o.Settings.ExitStatus} {
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				return current, sampleTime, errors.New("load evidence exists before observer readiness")
+			}
+		}
+	}
+	if !time.Now().Before(window.Deadline) {
+		return current, sampleTime, context.DeadlineExceeded
+	}
+	current.UTC = time.Now().UTC()
+	if err := json.NewEncoder(window.Output).Encode(current); err != nil {
+		return current, sampleTime, err
+	}
+	if !time.Now().Before(window.Deadline) {
+		return current, sampleTime, context.DeadlineExceeded
+	}
+	if err := window.Output.Sync(); err != nil {
+		return current, sampleTime, err
+	}
+	if err := ctx.Err(); err != nil {
+		return current, sampleTime, err
+	}
+	if err := heartbeat(o.Settings.Output+".ready", window.Deadline); err != nil {
+		return current, sampleTime, err
+	}
+	return current, sampleTime, ctx.Err()
 }
 
 func sameContainers(current, baseline pod) error {
 	if len(current.Status.Containers) == 0 || len(current.Status.Containers) != len(baseline.Status.Containers) {
 		return errors.New("container identity count changed")
 	}
-	identities := make(map[string]string)
+	identities := make(map[string]containerStatus)
 	for _, container := range baseline.Status.Containers {
-		identities[container.Name] = container.ImageID
+		identities[container.Name] = container
 	}
 	for _, container := range current.Status.Containers {
-		if container.ImageID == "" || identities[container.Name] != container.ImageID || container.Restarts != 0 {
+		if container.ImageID == "" || container.ContainerID == "" || identities[container.Name].ImageID != container.ImageID || identities[container.Name].ContainerID != container.ContainerID || container.Restarts != 0 {
 			return errors.New("container image identity changed or restarted")
 		}
 	}
@@ -327,7 +236,7 @@ func validate(current, baseline record, replicas int) error {
 	}
 	for _, item := range current.Pods {
 		original, ok := identities[item.Metadata.UID]
-		if !ok || item.Status.Phase != "Running" {
+		if !ok || item.Metadata.Name != original.Metadata.Name || item.Spec.NodeName != original.Spec.NodeName || item.Status.IP != original.Status.IP || item.Status.Phase != "Running" {
 			return fmt.Errorf("service Pod identity or lifecycle changed: %s", item.Metadata.Name)
 		}
 		if err := sameContainers(item, original); err != nil {
@@ -360,113 +269,6 @@ func validate(current, baseline record, replicas int) error {
 	}
 	if current.Job.Status.Failed != 0 {
 		return errors.New("load Job failed")
-	}
-	return nil
-}
-
-type usageIssue struct {
-	Reason           string     `json:"reason"`
-	Pod              string     `json:"pod"`
-	PodUID           string     `json:"pod_uid"`
-	Container        string     `json:"container,omitempty"`
-	PodPresent       bool       `json:"pod_present"`
-	ContainerPresent bool       `json:"container_present"`
-	Timestamp        *time.Time `json:"timestamp,omitempty"`
-	AgeNS            int64      `json:"age_ns,omitempty"`
-	MissingFields    []string   `json:"missing_fields,omitempty"`
-}
-
-type usageUnavailableError struct {
-	Issues []usageIssue
-}
-
-var usageQuantity = regexp.MustCompile(`^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+|[numkKMGTPE]|[KMGTPE]i)?$`)
-
-func (e *usageUnavailableError) Error() string {
-	return fmt.Sprintf("Pod usage unavailable: %s for %s", e.Issues[0].Reason, e.Issues[0].Pod)
-}
-
-func validateUsage(current record) error {
-	var usage usageList
-	if err := json.Unmarshal(current.Usage, &usage); err != nil {
-		return err
-	}
-	if usage.Items == nil {
-		return errors.New("invalid Pod usage list: items missing or null")
-	}
-	byName := make(map[string]podUsage)
-	for _, item := range usage.Items {
-		if _, duplicate := byName[item.Metadata.Name]; duplicate || item.Metadata.Name == "" {
-			return errors.New("invalid Pod usage name: empty or duplicate")
-		}
-		byName[item.Metadata.Name] = item
-	}
-	expected := append([]pod(nil), current.Pods...)
-	for _, item := range current.LoadPods {
-		if item.Status.Phase == "Running" {
-			expected = append(expected, item)
-		}
-	}
-	unavailable := &usageUnavailableError{}
-	for _, item := range expected {
-		metric, present := byName[item.Metadata.Name]
-		issue := usageIssue{Pod: item.Metadata.Name, PodUID: item.Metadata.UID, PodPresent: present}
-		if !present {
-			issue.Reason = "missing_pod"
-			unavailable.Issues = append(unavailable.Issues, issue)
-			continue
-		}
-		if metric.Timestamp.IsZero() {
-			issue.Reason = "missing_timestamp"
-			unavailable.Issues = append(unavailable.Issues, issue)
-		} else {
-			issue.Timestamp = &metric.Timestamp
-			age := current.UTC.Sub(metric.Timestamp)
-			issue.AgeNS = age.Nanoseconds()
-			if age < -30*time.Second {
-				return fmt.Errorf("invalid future Pod usage timestamp: %s at %s", item.Metadata.Name, metric.Timestamp.Format(time.RFC3339Nano))
-			}
-			if age > 2*time.Minute {
-				issue.Reason = "stale_pod"
-				unavailable.Issues = append(unavailable.Issues, issue)
-			}
-		}
-		containers := make(map[string]containerUsage)
-		expectedNames := make(map[string]bool)
-		for _, container := range item.Status.Containers {
-			expectedNames[container.Name] = true
-		}
-		for _, container := range metric.Containers {
-			if _, duplicate := containers[container.Name]; duplicate || !expectedNames[container.Name] {
-				return fmt.Errorf("invalid Pod usage container: %s/%s", item.Metadata.Name, container.Name)
-			}
-			containers[container.Name] = container
-		}
-		for _, container := range item.Status.Containers {
-			value, present := containers[container.Name]
-			issue.Container = container.Name
-			issue.ContainerPresent = present
-			issue.MissingFields = nil
-			if !present {
-				issue.Reason = "missing_container"
-				unavailable.Issues = append(unavailable.Issues, issue)
-				continue
-			}
-			for _, field := range []string{"cpu", "memory"} {
-				if value.Usage[field] == "" {
-					issue.MissingFields = append(issue.MissingFields, field)
-				} else if !usageQuantity.MatchString(value.Usage[field]) {
-					return fmt.Errorf("invalid Pod usage quantity: %s/%s %s", item.Metadata.Name, container.Name, field)
-				}
-			}
-			if len(issue.MissingFields) > 0 {
-				issue.Reason = "incomplete_container"
-				unavailable.Issues = append(unavailable.Issues, issue)
-			}
-		}
-	}
-	if len(unavailable.Issues) > 0 {
-		return unavailable
 	}
 	return nil
 }
@@ -656,14 +458,13 @@ func (o *observer) run(ctx context.Context) error {
 func main() {
 	cfg := settings{}
 	flag.StringVar(&cfg.Namespace, "namespace", "", "owned namespace")
+	flag.StringVar(&cfg.RunConfigSHA256, "run-config-sha256", "", "canonical frozen run configuration SHA256")
 	flag.StringVar(&cfg.Job, "job", "", "load Job name")
 	flag.StringVar(&cfg.Release, "release", "weir", "Helm release")
 	flag.StringVar(&cfg.Output, "output", "/results/observations.jsonl", "new persistent output file")
 	flag.DurationVar(&cfg.Interval, "interval", time.Minute, "frozen observation interval")
 	flag.DurationVar(&cfg.Duration, "duration", 25*time.Hour, "overall observer deadline")
 	flag.IntVar(&cfg.Replicas, "replicas", 3, "expected Weir replica count")
-	flag.StringVar(&cfg.MetricsPort, "metrics-port", "7449", "Weir diagnostics port")
-	flag.BoolVar(&cfg.RequireMetrics, "metrics", true, "require every Weir Pod metrics scrape")
 	flag.StringVar(&cfg.Report, "report", "/results/load.jsonl", "load JSONL report")
 	flag.StringVar(&cfg.ExitStatus, "exit-status", "/results/load-status.json", "load exit status")
 	flag.StringVar(&cfg.RunID, "run-id", "", "fixed load run ID")
@@ -673,7 +474,7 @@ func main() {
 		cfg.RunID = cfg.Job
 	}
 	name := regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
-	if !name.MatchString(cfg.Namespace) || !name.MatchString(cfg.Job) || cfg.Interval < time.Second || cfg.Duration < cfg.Interval || cfg.LoadDuration <= 0 || cfg.Replicas < 1 {
+	if !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(cfg.RunConfigSHA256) || !name.MatchString(cfg.Namespace) || !name.MatchString(cfg.Job) || cfg.Interval < time.Second || cfg.Duration < cfg.Interval || cfg.LoadDuration <= 0 || cfg.Replicas < 1 {
 		fmt.Fprintln(os.Stderr, "invalid observer configuration")
 		os.Exit(1)
 	}
@@ -694,7 +495,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	err = runner.run(ctx)
-	status := map[string]any{"completed_at": time.Now().UTC(), "passed": err == nil}
+	status := map[string]any{"completed_at": time.Now().UTC(), "passed": err == nil, "runID": cfg.RunID, "namespace": cfg.Namespace, "job": cfg.Job, "runConfigSHA256": cfg.RunConfigSHA256}
 	if err != nil {
 		status["error"] = err.Error()
 	}

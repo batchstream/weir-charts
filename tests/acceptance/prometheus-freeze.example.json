@@ -1,0 +1,120 @@
+{
+  "run": "weir-soak-unique-run-id",
+  "run_config_sha256": "REPLACE",
+  "tool_sha256": "REPLACE",
+  "namespace": "weir-acceptance",
+  "namespace_uid": "REPLACE",
+  "owner": "weir-acceptance",
+  "prometheus": {
+    "url": "http://127.0.0.1:29090",
+    "namespace": "monitoring",
+    "pod": "prometheus-0",
+    "uid": "REPLACE"
+  },
+  "containers": [
+    {
+      "role": "weir",
+      "pod": "weir-a",
+      "uid": "REPLACE",
+      "container": "weir",
+      "container_id": "containerd://REPLACE",
+      "image_id": "REPLACE",
+      "node": "REPLACE",
+      "pod_ip": "REPLACE",
+      "cadvisor_id": "REPLACE",
+      "cpu_limit": 2,
+      "memory_limit_bytes": 1073741824,
+      "instance": "REPLACE:7449",
+      "stores": [
+        "mongo",
+        "search"
+      ]
+    },
+    {
+      "role": "weir",
+      "pod": "weir-b",
+      "uid": "REPLACE",
+      "container": "weir",
+      "container_id": "containerd://REPLACE",
+      "image_id": "REPLACE",
+      "node": "REPLACE",
+      "pod_ip": "REPLACE",
+      "cadvisor_id": "REPLACE",
+      "cpu_limit": 2,
+      "memory_limit_bytes": 1073741824,
+      "instance": "REPLACE:7449",
+      "stores": [
+        "mongo",
+        "search"
+      ]
+    },
+    {
+      "role": "weir",
+      "pod": "weir-c",
+      "uid": "REPLACE",
+      "container": "weir",
+      "container_id": "containerd://REPLACE",
+      "image_id": "REPLACE",
+      "node": "REPLACE",
+      "pod_ip": "REPLACE",
+      "cadvisor_id": "REPLACE",
+      "cpu_limit": 2,
+      "memory_limit_bytes": 1073741824,
+      "instance": "REPLACE:7449",
+      "stores": [
+        "mongo",
+        "search"
+      ]
+    },
+    {
+      "role": "backend",
+      "pod": "mongo",
+      "uid": "REPLACE",
+      "container": "mongo",
+      "container_id": "containerd://REPLACE",
+      "image_id": "REPLACE",
+      "node": "REPLACE",
+      "pod_ip": "REPLACE",
+      "cadvisor_id": "REPLACE",
+      "cpu_limit": 2,
+      "memory_limit_bytes": 1073741824
+    },
+    {
+      "role": "backend",
+      "pod": "search",
+      "uid": "REPLACE",
+      "container": "search",
+      "container_id": "containerd://REPLACE",
+      "image_id": "REPLACE",
+      "node": "REPLACE",
+      "pod_ip": "REPLACE",
+      "cadvisor_id": "REPLACE",
+      "cpu_limit": 2,
+      "memory_limit_bytes": 1073741824
+    },
+    {
+      "role": "load",
+      "pod": "waiting-load",
+      "uid": "REPLACE",
+      "container": "waiting-load",
+      "container_id": "containerd://REPLACE",
+      "image_id": "REPLACE",
+      "node": "REPLACE",
+      "pod_ip": "REPLACE",
+      "cadvisor_id": "REPLACE",
+      "cpu_limit": 2,
+      "memory_limit_bytes": 1073741824
+    }
+  ],
+  "load_job_uid": "REPLACE_WITH_WAITING_LOAD_JOB_UID",
+  "observer": {
+    "job_uid": "REPLACE_WITH_OBSERVER_JOB_UID",
+    "pod": "REPLACE_WITH_OBSERVER_POD_NAME",
+    "uid": "REPLACE",
+    "container": "observer",
+    "container_id": "containerd://REPLACE",
+    "image_id": "REPLACE",
+    "node": "REPLACE",
+    "pod_ip": "REPLACE"
+  }
+}

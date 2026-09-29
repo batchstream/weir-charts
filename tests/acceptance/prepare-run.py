@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Render one owned namespace acceptance run; does not contact a cluster."""
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -9,15 +10,18 @@ CARRIER = 'docker.elastic.co/elasticsearch/elasticsearch@sha256:c2a3ed5f968be6d5
 
 
 def render(cfg):
-    for key in ('namespace', 'run', 'owner', 'pvc', 'node', 'architecture', 'serverRevision', 'imageDigest', 'chartVersion', 'sdkRevision', 'runnerSHA256', 'observerSHA256'):
+    for key in ('namespace', 'run', 'owner', 'pvc', 'node', 'architecture', 'serverRevision', 'imageDigest', 'chartVersion', 'sdkRevision', 'runnerSHA256', 'observerSHA256', 'evidenceToolSHA256', 'prometheusURL', 'prometheusSourceUID'):
         if not cfg.get(key) or 'REPLACE' in cfg[key]:
             raise ValueError('set ' + key + ' before rendering')
     for key in ('namespace', 'run', 'pvc'):
         if not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,47}[a-z0-9])?', cfg[key]):
             raise ValueError('invalid Kubernetes name: ' + key)
-    for key in ('runnerSHA256', 'observerSHA256'):
+    for key in ('runnerSHA256', 'observerSHA256', 'evidenceToolSHA256'):
         if not re.fullmatch(r'[0-9a-f]{64}', cfg[key]):
             raise ValueError('invalid binary hash: ' + key)
+    if cfg.get('resourceEvidenceSource') != 'prometheus':
+        raise ValueError('explicit Prometheus evidence source required')
+    config_sha = hashlib.sha256(json.dumps(cfg, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     run = cfg['run']
     if not run.startswith('weir-soak-'):
         raise ValueError('run must use the SDK-owned weir-soak- prefix')
@@ -28,7 +32,7 @@ def render(cfg):
     resources = [
         {'apiVersion': 'v1', 'kind': 'ServiceAccount', 'metadata': metadata},
         {'apiVersion': 'rbac.authorization.k8s.io/v1', 'kind': 'Role', 'metadata': metadata,
-         'rules': [{'apiGroups': [group], 'resources': [resource], 'verbs': ['get', 'list']} for group, resource in (('', 'pods'), ('batch', 'jobs'), ('metrics.k8s.io', 'pods'))]},
+         'rules': [{'apiGroups': [group], 'resources': [resource], 'verbs': ['get', 'list']} for group, resource in (('', 'pods'), ('batch', 'jobs'))]},
         {'apiVersion': 'rbac.authorization.k8s.io/v1', 'kind': 'RoleBinding', 'metadata': metadata,
          'subjects': [{'kind': 'ServiceAccount', 'name': service_account, 'namespace': namespace}],
          'roleRef': {'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'Role', 'name': service_account}},
@@ -48,10 +52,18 @@ def render(cfg):
             '-observer-status', observation + '.status.json', '-observer-heartbeat', observation + '.ready']
     load_script = '''set -uC
 for attempt in $(seq 1 300); do
-  if test -f /runner/ready && test -f "$HEARTBEAT"; then break; fi
+  if test -f /runner/ready && test -f "$HEARTBEAT" && test -f "$PROM_READY" && test -f "$PROM_FREEZE"; then break; fi
   sleep 1
 done
-if ! test -f /runner/ready || ! test -f "$HEARTBEAT"; then echo "load startup deadline exceeded"; exit 1; fi
+if ! test -f /runner/ready || ! test -f "$HEARTBEAT" || ! test -f "$PROM_READY" || ! test -f "$PROM_FREEZE"; then echo "load startup deadline exceeded"; exit 1; fi
+proof=()
+while IFS= read -r item; do proof+=("$item"); done < "$PROM_READY"
+if test "${#proof[@]}" -ne 5 || test "${proof[0]}" != "$RUN_ID" || test "${proof[1]}" != "$RUN_CONFIG_SHA256" || test "${proof[2]}" != "$POD_UID"; then echo "Prom preflight identity mismatch"; exit 1; fi
+if ! [[ "${proof[4]}" =~ ^[0-9]{10}$ ]]; then echo "invalid Prom preflight time"; exit 1; fi
+age=$(( $(date +%s) - ${proof[4]} ))
+if test "$age" -lt 0 || test "$age" -gt 120; then echo "Prom preflight expired"; exit 1; fi
+checksum=$(sha256sum "$PROM_FREEZE") || exit 1
+if test "${proof[3]}" != "${checksum%% *}"; then echo "Prom freeze checksum mismatch"; exit 1; fi
 printf '%s  /runner/program\\n' "$BINARY_SHA256" | sha256sum -c - || exit 1
 /runner/program "$@" > "$REPORT" 2> "$REPORT.stderr"
 run_status=$?
@@ -73,15 +85,15 @@ done
 echo "observer startup deadline exceeded"
 exit 1
 '''
-    observer_args = ['-namespace', namespace, '-job', run, '-release', cfg.get('release', 'weir'), '-output', observation,
-                     '-interval', cfg.get('interval', '1m'), '-duration', cfg['observerDuration'], '-metrics=true',
+    observer_args = ['-run-config-sha256', config_sha, '-namespace', namespace, '-job', run, '-release', cfg.get('release', 'weir'), '-output', observation,
+                     '-interval', cfg.get('interval', '1m'), '-duration', cfg['observerDuration'],
                      '-report', report, '-exit-status', exit_status, '-run-id', run, '-load-duration', cfg['duration']]
     result = {'resources': {'apiVersion': 'v1', 'kind': 'List', 'items': resources}}
     for observer in (False, True):
         name = run + '-observer' if observer else run
         environment = {'BINARY_SHA256': cfg['observerSHA256' if observer else 'runnerSHA256']}
         if not observer:
-            environment.update({'REPORT': report, 'EXIT_STATUS': exit_status, 'HEARTBEAT': observation + '.ready'})
+            environment.update({'REPORT': report, 'EXIT_STATUS': exit_status, 'HEARTBEAT': observation + '.ready', 'PROM_READY': '/results/' + run + '-prom-ready', 'PROM_FREEZE': '/results/' + run + '-prom-freeze.json', 'RUN_ID': run, 'RUN_CONFIG_SHA256': config_sha})
         container = {
             'name': 'observer' if observer else 'load', 'image': CARRIER,
             'command': ['/bin/bash', '-c', observer_script if observer else load_script, '--'],
@@ -91,6 +103,8 @@ exit 1
             'resources': {'requests': {'cpu': '100m' if observer else '1', 'memory': '128Mi' if observer else '512Mi'}, 'limits': {'cpu': '200m' if observer else '1', 'memory': '128Mi' if observer else '512Mi'}},
             'volumeMounts': [{'name': volume, 'mountPath': '/' + volume} for volume in ('runner', 'results', 'tmp')],
         }
+        if not observer:
+            container['env'].append({'name': 'POD_UID', 'valueFrom': {'fieldRef': {'fieldPath': 'metadata.uid'}}})
         spec = {
             'restartPolicy': 'Never', 'automountServiceAccountToken': observer, 'enableServiceLinks': False,
             'terminationGracePeriodSeconds': 30, 'nodeSelector': {'kubernetes.io/hostname': cfg['node'], 'kubernetes.io/arch': cfg['architecture']},

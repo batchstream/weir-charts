@@ -188,6 +188,55 @@ A new independently reviewed source/binary, run identity and full-duration resul
 are still required. No shared metrics-server, CNI or node-pool changes are part of
 this correction.
 
+## Third formal attempt and Prometheus evidence source
+
+R3 started at 2026-09-29T07:15:12.198542099Z and failed at
+07:30:42.199939615Z after 930.001398859 seconds: 27,894 cycles,
+55,788 confirmed writes/reads, seven failures, zero UNKNOWN and cycle p99 at most
+20 ms. Both Jobs exited one, without restart. After 15 complete observations the
+observer recorded 30 explicit metrics API 503 responses, exhausted the unchanged
+90-second deadline and failed; it did not renew its budget or heartbeat. The
+metrics-server replacement became Ready after that deadline. All seven raw result
+files were exported, individually verified against PVC hashes and fully parsed.
+This run and both earlier formal failures remain failed; none is resumed or
+combined with later data to manufacture 24 hours.
+
+The existing Prometheus already collected cAdvisor data throughout the three
+sampled failure windows, with actual resource timestamp gaps about 28–30 seconds.
+A limited owned-Pod annotation probe confirmed that its existing pod-discovery job
+also collects Weir business, queue, execution, process RSS and Go heap at 15-second
+intervals through diagnostics port 7449. The temporary annotation was restored.
+These limited windows and one-Pod probe are source discovery, not retrospective
+qualification of any failed run. Prometheus is single-replica with bounded
+retention; source metadata is not a guarantee of future complete history.
+
+Subsequent runs use the existing Prometheus for resource and application evidence,
+and the observer only for fixed Kubernetes lifecycle and durable load watchdog
+state. Runtime metrics.k8s.io access and duplicate application scrapes are removed.
+The new startup preflight uses actual raw samples before allowing business RPCs.
+Final collection uses raw range vectors, never query_range evaluation grids,
+lookback interpolation or zero filling. Original sample gaps and run boundaries
+must stay within 90 seconds; resource statistics must be within 120 seconds of
+the corresponding exporter observation, allowing only the existing 30-second
+clock skew. This measures exporter/statistics age, not TSDB ingestion latency.
+
+The existing lifecycle sampling and Prometheus historical sampling prove different
+things. Temporary historical query failure leaves evidence pending, while a real
+historical gap, identity conflict, counter reset, scrape failure, missing required
+series or resource bound failure prevents a pass. Final qualification requires
+load + lifecycle observer + complete Prometheus audit + independent trend review.
+The business gates remain actual 24h, six workers at five cycles/second, at least
+98% cycle coverage, every interval/overall cycle p99 <=500ms and zero failures or
+UNKNOWN. The workload remains a stability test, not peak-capacity certification.
+
+The reproducible annotation overlay and standalone export/audit tools do not change
+the packaged Chart. Chart 0.1.0 source and the newly reviewed tool source/hash must
+be recorded separately. All three Pods will roll when the Pod template annotations
+are applied; a new short pair, full Prometheus evidence audit and fresh identities
+must pass before any new 24-hour run. No shared metrics-server, Prometheus, CNI,
+node-pool or ASG mutation is part of this change. See the [source contract and
+commands](../tests/acceptance/prometheus.md).
+
 ## Network boundary and remaining evidence
 
 The AWS VPC CNI agent was installed with enforcement disabled. A controller-owned
@@ -202,8 +251,15 @@ The release OCI archive must be fetched and
 installed from its published location. The 24-hour load run starts only after the
 final versions and configuration are fixed and fault/rollout checks have ended.
 A zero-retry Job writes JSONL and exit status to a dedicated 1 GiB gp3 result PVC.
-`scripts/observe-soak.go` runs independently in the cluster and records each minute's exact Pod/Job identities, container image IDs, restart counts, readiness, Kubernetes CPU/memory usage and Weir metrics to the persistent volume. It fails on unexpected replacement, restart, readiness loss, Job failure, scrape/API errors or an excessive observation gap, with only the bounded usage unavailability recovery described above. The SDK watchdog cancels load if the observer fails or its heartbeat stops. Final success additionally verifies the durable runner `passed` record, exact run ID/duration, zero errors/UNKNOWN and exit code zero. Its output path must be new. See [the reproducible run templates](../tests/acceptance/README.md). The initial local Python sampler was calibration support only. The observer targets this fixed three-Weir/two-backend
-acceptance layout, not arbitrary production workloads.
+`scripts/observe-soak.go` runs independently in the cluster and persists fixed
+Pod/Job/container identity, lifecycle and readiness observations. It fails on
+replacement, restart, readiness loss, Job/API failure or excessive observation gap.
+The SDK watchdog stops load if that lifecycle observer fails or its heartbeat
+stops. Prometheus history collection is independent; query failures cannot cancel
+load and incomplete historical evidence cannot qualify it. Final lifecycle success
+also verifies the durable runner terminal report and exit status. Each result path
+is exclusive to a new run. See [the reproducible run templates](../tests/acceptance/README.md).
+
 
 The initial three-minute calibration completed 5,394 cycles in 180.060 seconds, about 89.91 main RPC/second, with zero failures and UNKNOWN outcomes. Its cycle p99 histogram upper bound was 50 ms. Peak sampled Weir CPU was 0.0841 cores and memory 11.06 MiB; the Elasticsearch fixture peaked at 946.1 MiB. This supports freezing the selected 90 RPC/second, cycle p99 <= 500 ms, and 98% completion thresholds for the formal run; it does not establish maximum capacity.
 
