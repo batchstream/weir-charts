@@ -1,5 +1,9 @@
-Weir gRPC endpoint: {{ include "weir.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+Weir SDK initialization endpoint: {{ include "weir.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
 
+Advertise the group headless business endpoint in discovery.advertise:
+{{ printf "%s-headless" (include "weir.fullname" . | trunc 54 | trimSuffix "-") }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+Validate the immutable image/config pair with the compatible Weir check command.
 Application traffic is plaintext and requires a trusted, isolated network.
 Verify the cluster CNI enforces NetworkPolicy and allow the necessary backend destinations.
 Readiness means the serving lifecycle is ready; verify actual SDK operations before promotion.

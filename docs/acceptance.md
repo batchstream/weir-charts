@@ -1,5 +1,9 @@
 # Acceptance evidence
 
+This historical report covers the Chart 0.1.x/server 0.1.x contract. It does not
+qualify Chart 0.2.0, its split YAML configuration, Store discovery topology, or a
+new image. Those require a separately recorded real-cluster acceptance run.
+
 Date: 2026-09-29. This is an evidence record, not an overall production qualification declaration.
 
 ## Chart checks

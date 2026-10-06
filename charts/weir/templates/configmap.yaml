@@ -7,5 +7,8 @@ metadata:
   labels:
     {{- include "weir.labels" . | nindent 4 }}
 data:
-  {{ .Values.config.key }}: {{ .Values.config.data | toJson | quote }}
+  node.yaml: |
+    {{- .Values.config.data.node | toYaml | nindent 4 }}
+  routes.yaml: |
+    {{- .Values.config.data.routes | toYaml | nindent 4 }}
 {{- end }}

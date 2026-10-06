@@ -30,7 +30,16 @@ jobs:
         with:
           version: v3.17.0
       - run: pip install -r requirements-dev.txt
-      - run: make package
+      - name: Checkout the supported Weir source contract
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: batchstream/weir
+          ref: 0d67cbfddb5c29353d00adcd8a9a0e1637daf4dd
+          path: .weir-contract
+          persist-credentials: false
+      - name: Build the contract validator
+        run: go -C .weir-contract build -o bin/weir ./cmd/weir
+      - run: make package WEIR_BIN="$PWD/.weir-contract/bin/weir"
       - name: Check version
         run: test "$GITHUB_REF_NAME" = "weir-$(helm show chart charts/weir | awk '/^version:/ {print $2}')"
       - name: Verify immutable version is absent

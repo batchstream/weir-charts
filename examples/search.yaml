@@ -1,4 +1,4 @@
-# Release name weir, namespace application. Update advertised DNS for your release.
+# Release name search, namespace application. Update advertised DNS for your release.
 # Non-secret example; provision the backend and target collections independently.
 peer:
   enabled: true
@@ -13,15 +13,15 @@ config:
         address: 127.0.0.1:7449
       memory: 2GiB
       discovery:
-        group: application-mongo
+        group: application-search
         peer_address_env: WEIR_PEER_ADDRESS
         seeds: [weir-seed.application.svc:7448]
-        advertise: [weir-weir-headless.application.svc:7447]
+        advertise: [search-weir-headless.application.svc:7447]
     routes:
       stores:
-        - name: mongo
-          mongodb:
-            uri: mongodb://mongo:27017/?directConnection=true
+        - name: search
+          search:
+            url: http://search:9200
           max_concurrency: 2
           max_batch_operations: 32
           max_read_size: 16KiB
@@ -43,9 +43,9 @@ networkPolicy:
     - to:
         - podSelector:
             matchLabels:
-              app: mongo
+              app: search
       ports:
-        - {protocol: TCP, port: 27017}
+        - {protocol: TCP, port: 9200}
     - to:
         - podSelector:
             matchLabels:

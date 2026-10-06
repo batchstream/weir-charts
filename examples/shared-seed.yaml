@@ -1,0 +1,22 @@
+# Optional ordinary initialization/bootstrap Service across all Weir groups.
+# Apply in the same namespace as the reviewed group releases.
+apiVersion: v1
+kind: Service
+metadata:
+  name: weir-seed
+  namespace: application
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: weir
+  ports:
+    - name: grpc
+      port: 7447
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: kubernetes.io/h2c
+    - name: peer
+      port: 7448
+      targetPort: peer
+      protocol: TCP
+      appProtocol: kubernetes.io/h2c

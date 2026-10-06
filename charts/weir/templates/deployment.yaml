@@ -47,7 +47,7 @@ spec:
         - name: weir
           image: {{ include "weir.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["-config", "/etc/weir/{{ .Values.config.key }}"]
+          args: ["serve", "--config", "/etc/weir/node.yaml", "--routes", "/etc/weir/routes.yaml"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -55,7 +55,7 @@ spec:
               drop: [ALL]
           ports:
             - name: grpc
-              containerPort: {{ .Values.containerPort }}
+              containerPort: {{ .Values.service.port }}
             {{- if .Values.peer.enabled }}
             - name: peer
               containerPort: {{ .Values.peer.port }}
@@ -64,23 +64,32 @@ spec:
             - name: metrics
               containerPort: {{ .Values.diagnostics.port }}
             {{- end }}
+          {{- if .Values.peer.enabled }}
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: WEIR_PEER_ADDRESS
+              value: "[$(POD_IP)]:{{ .Values.peer.port }}"
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           startupProbe:
             exec:
-              command: ["/weir", "-probe", "ready", "-probe-address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
+              command: ["/weir", "probe", "ready", "--address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
             timeoutSeconds: 2
             periodSeconds: 2
             failureThreshold: 15
           readinessProbe:
             exec:
-              command: ["/weir", "-probe", "ready", "-probe-address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
+              command: ["/weir", "probe", "ready", "--address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
             timeoutSeconds: 2
             periodSeconds: 2
             failureThreshold: 1
           livenessProbe:
             exec:
-              command: ["/weir", "-probe", "live", "-probe-address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
+              command: ["/weir", "probe", "live", "--address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
             timeoutSeconds: 2
             periodSeconds: 5
             failureThreshold: 3

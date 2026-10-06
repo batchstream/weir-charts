@@ -3,28 +3,28 @@ nameOverride: ""
 fullnameOverride: ""
 image:
   repository: ghcr.io/batchstream/weir
-  tag: "v0.1.0"
-  digest: sha256:93810bbfb9eb720d0d42296a3e856f60e1d94bdb22279555ad94a8fc79c0f7df
+  # Required: a compatible immutable image; no current-contract release is assumed.
+  digest: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 # Provision this Secret separately; never put backend credentials in Helm values.
 config:
   existingSecret: weir-config
-  key: node.json
-  # Non-secret configuration only. Set existingSecret to "" when using data.
+  # Secret must contain node.yaml and routes.yaml.
+  # Non-secret {node: <basic config>, routes: <Store config>} only.
+  # Set existingSecret to "" when using data.
   data: null
   # Change this when updating an existing Secret to trigger a controlled restart.
   revision: ""
 service:
   port: 7447
   annotations: {}
-containerPort: 7447
 peer:
   enabled: false
   port: 7448
 diagnostics:
   port: 7449
-# Requires diagnostics: 0.0.0.0:7449 and diagnostics_allow_intranet: true in config.
+# Requires diagnostics.address: 0.0.0.0:7449 and diagnostics.allow_intranet: true.
 metrics:
   enabled: false
   annotations: {}
@@ -32,10 +32,10 @@ metrics:
 resources:
   requests:
     cpu: "2"
-    memory: 1Gi
+    memory: 3Gi
   limits:
     cpu: "2"
-    memory: 1Gi
+    memory: 3Gi
 terminationGracePeriodSeconds: 15
 # No surge: still budget terminating Pods alongside replacements.
 strategy:
