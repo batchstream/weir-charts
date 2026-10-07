@@ -21,7 +21,16 @@ jobs:
         with:
           version: v3.17.0
       - run: pip install -r requirements-dev.txt
-      - run: make test
+      - name: Checkout the supported Weir source contract
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: batchstream/weir
+          ref: 0d67cbfddb5c29353d00adcd8a9a0e1637daf4dd
+          path: .weir-contract
+          persist-credentials: false
+      - name: Build the contract validator
+        run: go -C .weir-contract build -o bin/weir ./cmd/weir
+      - run: make test WEIR_BIN="$PWD/.weir-contract/bin/weir"
       - run: helm package charts/weir --destination dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

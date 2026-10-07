@@ -1,0 +1,3 @@
+# Template-only image fixture. This digest is not a deployable image.
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000

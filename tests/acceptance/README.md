@@ -1,5 +1,10 @@
 # Persistent acceptance runs
 
+The recorded run examples and SDK soak layout belong to the historical v0.1.x
+qualification. Before using them for Chart 0.2.0, qualify a current SDK/server
+pair and adapt Store targets and result checks to that pair. Chart unit/contract
+tests do not establish a real-cluster or 24-hour acceptance result.
+
 These opt-in fixtures operate only in an explicitly selected, task-owned namespace. They are not chart dependencies. Supply isolated MongoDB replica-set and Elasticsearch indices, a three-replica Weir installation, working metrics-server, diagnostics metrics access, and a 1 GiB persistent results volume. Temporary backend data in the qualification run uses `emptyDir`; it does not qualify backend durability or backups.
 
 Build the SDK's `examples/soak` at the recorded commit and `scripts/observe-soak.go` at this repository's recorded commit, using the cluster architecture and `CGO_ENABLED=0`. Record both SHA256 values before creating Jobs. For deterministic three-Pod coverage with SDK v0.1.1+, remove `address`, set `targets` to the three fixed `PodIP:7447` strings in run configuration and save the matching Pod names, UIDs and image IDs alongside it. Six workers map round-robin to these targets, one Mongo and one Search worker per Pod. The Service-based five-RPC and rollout checks are a separate phase. Verify all three Pod RPC counters increase before accepting the load window. Copy `run.example.json` and set the fixed identities, endpoint, unique run name, owner, namespace, results PVC and its node. The load and observer share that node because a ReadWriteOnce PVC cannot attach on different nodes. The Weir replicas remain spread across workers.

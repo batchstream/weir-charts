@@ -16,7 +16,6 @@
     "fullnameOverride",
     "replicaCount",
     "terminationGracePeriodSeconds",
-    "containerPort",
     "image",
     "config",
     "service",
@@ -53,7 +52,26 @@
       "type": "array"
     },
     "extraVolumeMounts": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "mountPath",
+          "readOnly"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "mountPath": {
+            "type": "string"
+          },
+          "readOnly": {
+            "const": true
+          }
+        }
+      }
     },
     "nameOverride": {
       "type": "string"
@@ -71,17 +89,11 @@
       "minimum": 10,
       "maximum": 300
     },
-    "containerPort": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 65535
-    },
     "image": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "repository",
-        "tag",
         "digest",
         "pullPolicy"
       ],
@@ -89,9 +101,6 @@
         "repository": {
           "type": "string",
           "minLength": 1
-        },
-        "tag": {
-          "type": "string"
         },
         "digest": {
           "type": "string",
@@ -111,16 +120,11 @@
       "additionalProperties": false,
       "required": [
         "existingSecret",
-        "key",
         "revision"
       ],
       "properties": {
         "existingSecret": {
           "type": "string"
-        },
-        "key": {
-          "type": "string",
-          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
         },
         "revision": {
           "type": "string"
@@ -129,7 +133,20 @@
           "type": [
             "object",
             "null"
-          ]
+          ],
+          "additionalProperties": false,
+          "required": [
+            "node",
+            "routes"
+          ],
+          "properties": {
+            "node": {
+              "type": "object"
+            },
+            "routes": {
+              "type": "object"
+            }
+          }
         }
       }
     },
