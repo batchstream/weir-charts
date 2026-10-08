@@ -62,7 +62,7 @@ def check_runtime(binary, directory):
     app_port = application.getsockname()[1]
     diagnostic_port = diagnostics.getsockname()[1]
     node = {"listeners": {"application": "0.0.0.0:" + str(app_port)},
-            "diagnostics": {"address": "127.0.0.1:" + str(diagnostic_port)}, "memory": "1GiB"}
+            "diagnostics": {"address": "127.0.0.1:" + str(diagnostic_port)}}
     data = {"node": node, "routes": {"stores": []}}
     values = {"config": {"existingSecret": "", "data": data},
               "service": {"port": app_port}, "diagnostics": {"port": diagnostic_port}}
@@ -136,13 +136,13 @@ def main():
         validate_config(binary, render(files, "search"), directory)
         # A real binary must reject old fields that a permissive Helm object could accept.
         old = copy.deepcopy(fixtures[0][1])
-        old["config"]["data"]["node"]["memory_mib"] = 768
+        old["config"]["data"]["node"]["memory"] = "1GiB"
         try:
             validate_config(binary, render(old), directory)
         except subprocess.CalledProcessError:
             pass
         else:
-            raise RuntimeError("legacy configuration unexpectedly accepted")
+            raise RuntimeError("removed memory configuration unexpectedly accepted")
         check_runtime(binary, directory)
     print("Rendered MongoDB/Search config, credential-file fixtures, serve/probes and shutdown passed")
 

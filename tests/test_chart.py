@@ -27,9 +27,10 @@ def render(values=None, success=True):
     return resources
 
 
-def config_values(memory="2GiB"):
+def config_values(stall="30s"):
     node = {"listeners": {"application": "0.0.0.0:7447"},
-            "diagnostics": {"address": "127.0.0.1:7449"}, "memory": memory}
+            "diagnostics": {"address": "127.0.0.1:7449"},
+            "transport": {"timeouts": {"stall": stall}}}
     values = {"config": {"existingSecret": "", "data": {"node": node, "routes": {"stores": []}}}}
     return values
 
@@ -71,10 +72,10 @@ class ChartTests(unittest.TestCase):
         self.assertEqual([p["port"] for p in policy["egress"][0]["ports"]], [53, 53])
 
     def test_configuration_rolls_and_secret_is_never_rendered(self):
-        first = config_values("2GiB")
-        second = config_values("1GiB")
+        first = config_values("30s")
+        second = config_values("20s")
         a, b = render(first), render(second)
-        self.assertEqual(yaml.safe_load(a["ConfigMap"]["data"]["node.yaml"])["memory"], "2GiB")
+        self.assertEqual(yaml.safe_load(a["ConfigMap"]["data"]["node.yaml"])["transport"]["timeouts"]["stall"], "30s")
         self.assertEqual(yaml.safe_load(a["ConfigMap"]["data"]["routes.yaml"]), {"stores": []})
         self.assertNotEqual(a["Deployment"]["spec"]["template"]["metadata"]["annotations"], b["Deployment"]["spec"]["template"]["metadata"]["annotations"])
         secret_values = {"config": {"existingSecret": "approved-v2", "revision": "v2"}}

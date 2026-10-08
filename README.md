@@ -1,10 +1,10 @@
 # Weir Helm charts
 
-Deploy [Weir](https://github.com/batchstream/weir), a bounded synchronous MongoDB
+Deploy [Weir](https://github.com/batchstream/weir), a synchronous MongoDB
 and Search data plane, on Kubernetes. Helm 3.17+ and Kubernetes 1.30+ are required.
-Chart 0.2.0 targets the source contract recorded in Chart.yaml's
-`weir.batchstream.io/source-revision` annotation. The earlier release image and
-Chart 0.1.x configuration are incompatible with this contract.
+Chart 0.3.0 targets the source contract recorded in Chart.yaml's
+`weir.batchstream.io/source-revision` annotation. Older configuration using manual memory, concurrency and business timeout
+fields must be updated for this contract.
 
 Each release runs one replica group, with one Weir process per Pod and Lua inside
 that process. Backends, collections, indices, backups and storage are provisioned
@@ -30,9 +30,13 @@ The deployment starts:
 ```
 
 The application listener must bind `0.0.0.0:<service.port>`, and diagnostics must
-bind `127.0.0.1:<diagnostics.port>`. Set a process `memory` budget below the container
-memory limit; the examples use `2GiB` against the default `3Gi` limit. For peer
-synchronization, enable `peer.enabled`, bind `0.0.0.0:<peer.port>` and select
+bind `127.0.0.1:<diagnostics.port>`. Weir detects the visible container, host and
+process memory limits automatically; there is no process `memory` configuration.
+Set Kubernetes resource limits for the actual Pod capacity. Each Store exposes
+`batch_queue.max_operations` and `batch_queue.max_bytes` for waiting work, plus
+`max_batch_operations` and `max_batch_bytes` for physical batches. Dispatch returns
+queue capacity immediately. Business execution follows the client context without
+a Weir concurrency or connection cap. For peer synchronization, enable `peer.enabled`, bind `0.0.0.0:<peer.port>` and select
 `discovery.peer_address_env: WEIR_PEER_ADDRESS`. The Pod supplies this variable
 through its public Pod IP and peer port, with brackets that work for IPv4 and IPv6.
 The examples use IPv4 wildcard listeners; for an IPv6 Pod network, bind application
@@ -100,11 +104,11 @@ selector assumes release `weir`; adjust it for other release names. It requires
 at least two eligible worker hostnames. The optional PDB limits voluntary
 disruptions, and does not establish physical fault tolerance by itself.
 
-Each default Pod requests and limits 2 CPU / 3 GiB. Budget backend concurrency
-per Store on every starting, running and terminating Pod. A revision can have
-three old and three new processes while termination completes; reserve up to
-12 CPU / 18 GiB and twice the steady backend connection budget. Zero-surge rolling
-updates do not bound terminating processes or remote work after connection loss.
+Each default Pod requests and limits 2 CPU / 3 GiB. Observe backend concurrency
+and connection demand on every starting, running and terminating Pod. A revision can have three old
+and three new processes while termination completes; reserve up to
+12 CPU / 18 GiB and allow for twice the steady backend connection demand.
+Zero-surge rolling updates do not bound terminating processes or remote work after connection loss.
 
 SIGTERM withdraws readiness and drains admitted work within the application's
 5-second cap. The Chart grants 15 seconds for termination and kubelet overhead.
@@ -153,7 +157,7 @@ startup/readiness/liveness probes and verifies bounded SIGTERM shutdown. It make
 no backend connections and reads no existing Secrets. CI builds the fixed source
 revision before running the same checks; it packages the Chart as an artifact.
 
-A reviewed `weir-0.2.0` tag can publish the immutable OCI Chart and GitHub archive
+A reviewed `weir-0.3.0` tag can publish the immutable OCI Chart and GitHub archive
 with SHA256SUMS after release preflight. Updating the server contract requires
 updating the Chart source annotation and CI source pin together, rerunning these
 checks and qualifying the intended immutable image. Real install/upgrade/rollback,

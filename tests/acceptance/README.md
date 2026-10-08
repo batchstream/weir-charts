@@ -1,7 +1,7 @@
 # Persistent acceptance runs
 
 The recorded run examples and SDK soak layout belong to the historical v0.1.x
-qualification. Before using them for Chart 0.2.0, qualify a current SDK/server
+qualification. Before using them for Chart 0.3.0, qualify a current SDK/server
 pair and adapt Store targets and result checks to that pair. Chart unit/contract
 tests do not establish a real-cluster or 24-hour acceptance result.
 

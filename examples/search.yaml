@@ -11,7 +11,6 @@ config:
         peer: 0.0.0.0:7448
       diagnostics:
         address: 127.0.0.1:7449
-      memory: 2GiB
       discovery:
         group: application-search
         peer_address_env: WEIR_PEER_ADDRESS
@@ -22,9 +21,13 @@ config:
         - name: search
           search:
             url: http://search:9200
-          max_concurrency: 2
+          # Batch size controls each physical exchange, independently of execution concurrency.
           max_batch_operations: 32
-          max_read_size: 16KiB
+          max_batch_bytes: 8MiB
+          # These capacities count waiting work; dispatch releases count and bytes.
+          batch_queue:
+            max_operations: 1024
+            max_bytes: 32MiB
 networkPolicy:
   ingress:
     - from:
