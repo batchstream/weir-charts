@@ -41,9 +41,9 @@ def fixture():
         labels = dict(__name__=name, pod='weir', instance=entry['instance'], job='pod')
         variants = [labels]
         if name.startswith('weir_store_'):
-            variants = [dict(labels, store=store, kind='record') for store in ('mongo', 'search')]
+            variants = [dict(labels, store=store, kind='execution') for store in ('mongo', 'search')]
         if name == 'weir_rpc_completions_total':
-            variants = [dict(labels, method=method, status='ok') for method in ('Read', 'Mutate', 'Bulk')]
+            variants = [dict(labels, method=method, status='ok') for method in ('execute', 'resolve_store')]
         for variant in variants:
             values = [(point, point if name.endswith(('_total', '_sum', '_count')) else 1) for point in range(990, 1126, 15)]
             series.append((variant, values))
@@ -162,8 +162,15 @@ class PrometheusTests(unittest.TestCase):
         self.assertTrue(application)
         self.assertTrue(all(s['max_gap_seconds'] <= 90 for s in application))
 
+    def test_execution_concurrency_is_observed_without_a_capacity_gate(self):
+        entry, series, options = fixture()
+        for labels, values in series:
+            if labels['__name__'] == 'weir_store_active_executions':
+                values[:] = [(point, 10000) for point, _ in values]
+        self.assertTrue(PROM.audit_application(entry, series, options))
+
     def test_raw_gaps_boundaries_resets_and_identity_fail(self):
-        for mode in ('gap', 'start', 'end', 'uid', 'container', 'duplicate', 'missing', 'reset', 'oom', 'future', 'stale', 'up', 'app-missing', 'no-increment', 'backend-family', 'rpc-error', 'queue-overflow', 'target-missing'):
+        for mode in ('gap', 'start', 'end', 'uid', 'container', 'duplicate', 'missing', 'reset', 'oom', 'future', 'stale', 'up', 'app-missing', 'no-increment', 'backend-family', 'rpc-error', 'queue-overflow', 'queue-byte-overflow', 'target-missing'):
             with self.subTest(mode=mode):
                 entry, series, options = fixture()
                 if mode == 'gap': series[0][1][:] = [(990, 1), (1100, 2)]
@@ -188,10 +195,12 @@ class PrometheusTests(unittest.TestCase):
                         if labels['__name__'] == 'weir_store_executions_total': values[:] = [(t, 1) for t, _ in values]
                 if mode == 'backend-family': series[:] = [(l, v) for l, v in series if not (l['__name__'] == 'weir_store_pending_entries' and l.get('store') == 'search')]
                 if mode == 'rpc-error':
-                    labels = dict(__name__='weir_rpc_completions_total', pod='weir', instance=entry['instance'], job='pod', status='non_ok', method='Read')
+                    labels = dict(__name__='weir_rpc_completions_total', pod='weir', instance=entry['instance'], job='pod', status='non_ok', method='execute')
                     series.append((labels, [(t, t) for t in range(990, 1126, 15)]))
                 if mode == 'queue-overflow':
                     next(v for l, v in series if l['__name__'] == 'weir_store_pending_entries')[4] = (1050, 2)
+                if mode == 'queue-byte-overflow':
+                    next(v for l, v in series if l['__name__'] == 'weir_store_pending_reserved_bytes')[4] = (1050, 2)
                 if mode == 'target-missing': series[:] = [(l, v) for l, v in series if l['__name__'] not in PROM.APPLICATION]
                 with self.assertRaises(ValueError):
                     PROM.audit_container(entry, series, options)

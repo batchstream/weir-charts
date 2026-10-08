@@ -22,7 +22,8 @@ RESOURCE = ('container_cpu_usage_seconds_total', 'container_memory_working_set_b
             'container_start_time_seconds', 'container_last_seen')
 APPLICATION = ('up', 'weir_node_ready', 'weir_rpc_completions_total', 'weir_store_executions_total',
                'weir_store_records_total', 'weir_store_pending_entries', 'weir_store_pending_entries_limit',
-               'weir_store_active_executions', 'weir_store_window_limit',
+               'weir_store_active_executions', 'weir_store_pending_reserved_bytes',
+               'weir_store_pending_reserved_bytes_limit',
                'weir_store_queue_wait_seconds_count', 'weir_store_queue_wait_seconds_sum',
                'weir_store_execution_seconds_count', 'weir_store_execution_seconds_sum',
                'process_resident_memory_bytes', 'go_memstats_heap_alloc_bytes')
@@ -345,7 +346,7 @@ def audit_application(entry, series, options):
                     raise ValueError('non-OK application RPC increment')
                 if labels.get('status') == 'ok' and delta > 0:
                     rpcs.add(labels.get('method'))
-            if name == 'weir_store_executions_total' and labels.get('kind') == 'record':
+            if name == 'weir_store_executions_total' and labels.get('kind') == 'execution':
                 stores[labels.get('store')] = delta
             if name == 'weir_store_records_total':
                 records[labels.get('store')] = records.get(labels.get('store'), 0) + delta
@@ -361,15 +362,15 @@ def audit_application(entry, series, options):
             if index < 0 or point - up_times[index] > SKEW:
                 raise ValueError('application sample lacks matching successful scrape time')
     for store in entry['stores']:
-        for used_name, limit_name in (('weir_store_pending_entries', 'weir_store_pending_entries_limit'), ('weir_store_active_executions', 'weir_store_window_limit')):
+        for used_name, limit_name in (('weir_store_pending_entries', 'weir_store_pending_entries_limit'), ('weir_store_pending_reserved_bytes', 'weir_store_pending_reserved_bytes_limit')):
             used_series = [values for _, labels, values in selected if labels['__name__'] == used_name and labels.get('store') == store]
             limit_series = [values for _, labels, values in selected if labels['__name__'] == limit_name and labels.get('store') == store]
             if len(used_series) != 1 or len(limit_series) != 1:
-                raise ValueError('ambiguous queue/execution capacity')
+                raise ValueError('ambiguous queue capacity')
             limits = dict(limit_series[0])
             if any(point not in limits or value > limits[point] for point, value in used_series[0]):
-                raise ValueError('queue/execution exceeds same-scrape capacity')
-    if options.phase == 'postrun' and (set(stores) != set(entry['stores']) or min(stores.values()) <= 0 or set(records) != set(entry['stores']) or min(records.values()) <= 0 or not {'Read', 'Mutate', 'Bulk'}.issubset(rpcs)):
+                raise ValueError('queue exceeds same-scrape capacity')
+    if options.phase == 'postrun' and (set(stores) != set(entry['stores']) or min(stores.values()) <= 0 or set(records) != set(entry['stores']) or min(records.values()) <= 0 or 'execute' not in rpcs):
         raise ValueError('missing per-Pod backend/RPC execution increment')
     return summaries
 

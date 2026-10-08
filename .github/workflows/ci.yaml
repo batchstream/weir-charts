@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: batchstream/weir
-          ref: 0d67cbfddb5c29353d00adcd8a9a0e1637daf4dd
+          ref: db64258cd48a047d94180c10e9fc2069ea934c1d
           path: .weir-contract
           persist-credentials: false
       - name: Build the contract validator
