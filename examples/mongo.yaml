@@ -19,15 +19,17 @@ config:
     routes:
       stores:
         - name: mongo
-          mongodb:
-            uri: mongodb://mongo:27017/?directConnection=true
-          # Batch size controls each physical exchange, independently of execution concurrency.
-          max_batch_operations: 32
-          max_batch_bytes: 8MiB
-          # These capacities count waiting work; dispatch releases count and bytes.
-          batch_queue:
-            max_operations: 1024
-            max_bytes: 32MiB
+          backend:
+            mongodb:
+              uri: mongodb://mongo:27017/?directConnection=true
+          # Aggregation is independent of active execution concurrency.
+          batching:
+            max_operations: 32
+            max_bytes: 8MiB
+            # These capacities count waiting work; dispatch releases count and bytes.
+            queue:
+              max_operations: 1024
+              max_bytes: 32MiB
 networkPolicy:
   ingress:
     - from:

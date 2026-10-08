@@ -26,8 +26,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- if .Values.config.data -}}
 {{- range .Values.config.data.routes.stores -}}
-{{- $mongo := default dict .mongodb -}}
-{{- $search := default dict .search -}}
+{{- $backend := default dict .backend -}}
+{{- $mongo := default dict $backend.mongodb -}}
+{{- $search := default dict $backend.search -}}
 {{- $connection := default dict $search.connection -}}
 {{- if or $mongo.username $mongo.password $connection.username $connection.password -}}
 {{- fail "config.data cannot contain backend credentials; use username_file/password_file and external Secret mounts" -}}

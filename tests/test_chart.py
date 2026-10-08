@@ -82,7 +82,7 @@ class ChartTests(unittest.TestCase):
         secret = render(secret_values)
         self.assertEqual(secret["Deployment"]["spec"]["template"]["metadata"]["annotations"]["weir.batchstream.io/config-revision"], "v2")
         routes_changed = config_values()
-        routes_changed["config"]["data"]["routes"]["stores"] = [{"name": "mongo", "mongodb": {"uri": "mongodb://mongo:27017"}}]
+        routes_changed["config"]["data"]["routes"]["stores"] = [{"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017"}}}]
         changed = render(routes_changed)
         self.assertNotEqual(a["Deployment"]["spec"]["template"]["metadata"]["annotations"]["checksum/config"], changed["Deployment"]["spec"]["template"]["metadata"]["annotations"]["checksum/config"])
         self.assertNotIn("ConfigMap", secret)
@@ -145,7 +145,7 @@ class ChartTests(unittest.TestCase):
 
     def test_inline_auth_and_writable_extra_mounts_are_rejected(self):
         invalid = config_values()
-        invalid["config"]["data"]["routes"]["stores"] = [{"name": "mongo", "mongodb": {"uri": "mongodb://mongo:27017", "username": "test-user", "password": "test-password"}}]
+        invalid["config"]["data"]["routes"]["stores"] = [{"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017", "username": "test-user", "password": "test-password"}}}]
         self.assertNotEqual(render(invalid, success=False).returncode, 0)
         invalid = {"extraVolumeMounts": [{"name": "extra", "mountPath": "/extra", "readOnly": False}]}
         self.assertNotEqual(render(invalid, success=False).returncode, 0)

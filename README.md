@@ -2,7 +2,7 @@
 
 Deploy [Weir](https://github.com/batchstream/weir), a synchronous MongoDB
 and Search data plane, on Kubernetes. Helm 3.17+ and Kubernetes 1.30+ are required.
-Chart 0.3.0 targets the source contract recorded in Chart.yaml's
+Chart 0.4.0 targets the source contract recorded in Chart.yaml's
 `weir.batchstream.io/source-revision` annotation. Older configuration using manual memory, concurrency and business timeout
 fields must be updated for this contract.
 
@@ -22,7 +22,7 @@ for installation.
 
 Provision an external Secret with **both** `node.yaml` and `routes.yaml`, and set
 `config.existingSecret` to its name. `node.yaml` uses the upstream basic YAML
-schema; `routes.yaml` contains `stores` with `mongodb` or `search` backend settings.
+schema; `routes.yaml` contains `stores` with `backend.mongodb` or `backend.search` connection settings.
 The deployment starts:
 
 ```sh
@@ -33,8 +33,8 @@ The application listener must bind `0.0.0.0:<service.port>`, and diagnostics mus
 bind `127.0.0.1:<diagnostics.port>`. Weir detects the visible container, host and
 process memory limits automatically; there is no process `memory` configuration.
 Set Kubernetes resource limits for the actual Pod capacity. Each Store exposes
-`batch_queue.max_operations` and `batch_queue.max_bytes` for waiting work, plus
-`max_batch_operations` and `max_batch_bytes` for physical batches. Dispatch returns
+`batching.queue.max_operations` and `batching.queue.max_bytes` for waiting work, plus
+`batching.max_operations` and `batching.max_bytes` for physical batches. Dispatch returns
 queue capacity immediately. Business execution follows the client context without
 a Weir concurrency or connection cap. For peer synchronization, enable `peer.enabled`, bind `0.0.0.0:<peer.port>` and select
 `discovery.peer_address_env: WEIR_PEER_ADDRESS`. The Pod supplies this variable
@@ -44,10 +44,10 @@ and peer listeners to `[::]:<port>` instead. All replicas of a release must shar
 same `discovery.group`, Store definitions and business advertisement.
 
 Backend database/collection/index targets come from request URIs, rather than
-Chart routing configuration. Authenticated MongoDB uses `mongodb.username_file`
-and `mongodb.password_file`, with explicit SCRAM-SHA-256, authSource and TLS in
+Chart routing configuration. Authenticated MongoDB uses `backend.mongodb.username_file`
+and `backend.mongodb.password_file`, with explicit SCRAM-SHA-256, authSource and TLS in
 the MongoDB URI; Search uses the same fields under
-`search.connection`. Mount their externally managed Secret read-only at the
+`backend.search.connection`. Mount their externally managed Secret read-only at the
 referenced paths. Search HTTPS can use an explicitly mounted `ca_file`; otherwise
 it uses system trust. [examples/existing-secret.yaml](examples/existing-secret.yaml)
 shows external config, auth and CA mounts.
@@ -111,7 +111,7 @@ and three new processes while termination completes; reserve up to
 Zero-surge rolling updates do not bound terminating processes or remote work after connection loss.
 
 SIGTERM withdraws readiness and drains admitted work within the application's
-5-second cap. The Chart grants 15 seconds for termination and kubelet overhead.
+configured `lifecycle.shutdown_timeout` (default 5 seconds). The Chart grants 15 seconds for termination and kubelet overhead.
 Probes execute `/weir probe ready|live --address 127.0.0.1:7449`. Readiness describes
 lifecycle; qualify real Read/Mutate/Scan/Native operations independently. A sent
 mutation without a terminal reply has an unknown outcome and requires explicit
@@ -157,7 +157,7 @@ startup/readiness/liveness probes and verifies bounded SIGTERM shutdown. It make
 no backend connections and reads no existing Secrets. CI builds the fixed source
 revision before running the same checks; it packages the Chart as an artifact.
 
-A reviewed `weir-0.3.0` tag can publish the immutable OCI Chart and GitHub archive
+A reviewed `weir-0.4.0` tag can publish the immutable OCI Chart and GitHub archive
 with SHA256SUMS after release preflight. Updating the server contract requires
 updating the Chart source annotation and CI source pin together, rerunning these
 checks and qualifying the intended immutable image. Real install/upgrade/rollback,
