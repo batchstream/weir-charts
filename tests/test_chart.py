@@ -145,7 +145,7 @@ class ChartTests(unittest.TestCase):
 
     def test_inline_auth_and_writable_extra_mounts_are_rejected(self):
         invalid = config_values()
-        invalid["config"]["data"]["routes"]["stores"] = [{"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017", "username": "test-user", "password": "test-password"}}}]
+        invalid["config"]["data"]["routes"]["stores"] = [{"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017"}, "authentication": {"username": "test-user", "password": "test-password"}}}]
         self.assertNotEqual(render(invalid, success=False).returncode, 0)
         invalid = {"extraVolumeMounts": [{"name": "extra", "mountPath": "/extra", "readOnly": False}]}
         self.assertNotEqual(render(invalid, success=False).returncode, 0)

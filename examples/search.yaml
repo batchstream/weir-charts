@@ -26,10 +26,10 @@ config:
           batching:
             max_operations: 32
             max_bytes: 8MiB
-            # These capacities count waiting work; dispatch releases count and bytes.
-            queue:
-              max_operations: 1024
-              max_bytes: 32MiB
+          # All command types count waiting work; dispatch releases count and bytes.
+          queue:
+            max_operations: 1024
+            max_bytes: 32MiB
 networkPolicy:
   ingress:
     - from:
