@@ -27,6 +27,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if .Values.config.data -}}
 {{- range .Values.config.data.routes.stores -}}
 {{- $backend := default dict .backend -}}
+{{- $mongodb := default dict $backend.mongodb -}}
+{{- if or (hasKey $mongodb "username") (hasKey $mongodb "password") (hasKey $mongodb "username_file") (hasKey $mongodb "password_file") -}}
+{{- fail "removed MongoDB authentication fields are unsupported; use backend.authentication" -}}
+{{- end -}}
+{{- $search := default dict $backend.search -}}
+{{- if hasKey $search "connection" -}}
+{{- fail "backend.search.connection is unsupported; use backend.authentication and backend.tls" -}}
+{{- end -}}
 {{- $authentication := default dict $backend.authentication -}}
 {{- if or $authentication.username $authentication.password -}}
 {{- fail "config.data cannot contain backend credentials; use username_file/password_file and external Secret mounts" -}}
