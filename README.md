@@ -2,7 +2,7 @@
 
 Deploy [Weir](https://github.com/batchstream/weir), a synchronous MongoDB
 and Search data plane, on Kubernetes. Helm 3.17+ and Kubernetes 1.30+ are required.
-Chart 0.4.0 targets the source contract recorded in Chart.yaml's
+Chart 0.5.0 targets the source contract recorded in Chart.yaml's
 `weir.batchstream.io/source-revision` annotation. Older configuration using manual memory, concurrency and business timeout
 fields must be updated for this contract.
 
@@ -33,7 +33,7 @@ The application listener must bind `0.0.0.0:<service.port>`, and diagnostics mus
 bind `127.0.0.1:<diagnostics.port>`. Weir detects the visible container, host and
 process memory limits automatically; there is no process `memory` configuration.
 Set Kubernetes resource limits for the actual Pod capacity. Each Store exposes
-`batching.queue.max_operations` and `batching.queue.max_bytes` for waiting work, plus
+`queue.max_operations` and `queue.max_bytes` for waiting work, plus
 `batching.max_operations` and `batching.max_bytes` for physical batches. Dispatch returns
 queue capacity immediately. Business execution follows the client context without
 a Weir concurrency or connection cap. For peer synchronization, enable `peer.enabled`, bind `0.0.0.0:<peer.port>` and select
@@ -44,12 +44,12 @@ and peer listeners to `[::]:<port>` instead. All replicas of a release must shar
 same `discovery.group`, Store definitions and business advertisement.
 
 Backend database/collection/index targets come from request URIs, rather than
-Chart routing configuration. Authenticated MongoDB uses `backend.mongodb.username_file`
-and `backend.mongodb.password_file`, with explicit SCRAM-SHA-256, authSource and TLS in
-the MongoDB URI; Search uses the same fields under
-`backend.search.connection`. Mount their externally managed Secret read-only at the
-referenced paths. Search HTTPS can use an explicitly mounted `ca_file`; otherwise
-it uses system trust. [examples/existing-secret.yaml](examples/existing-secret.yaml)
+Chart routing configuration. MongoDB and Search use `backend.authentication.username_file`
+and `backend.authentication.password_file`. MongoDB requires explicit SCRAM-SHA-256, authSource and TLS in
+the MongoDB URI. Mount their externally managed Secret read-only at the
+referenced paths. Both adapters can use an explicitly mounted `backend.tls.ca_file`; otherwise
+they use system trust. Process `lua` and `transport.max_pending_records` apply to
+every Store; Store `scan` settings control retained fetch/publication batches. [examples/existing-secret.yaml](examples/existing-secret.yaml)
 shows external config, auth and CA mounts.
 
 For non-secret configuration, set `config.existingSecret: ""` and provide
@@ -157,7 +157,7 @@ startup/readiness/liveness probes and verifies bounded SIGTERM shutdown. It make
 no backend connections and reads no existing Secrets. CI builds the fixed source
 revision before running the same checks; it packages the Chart as an artifact.
 
-A reviewed `weir-0.4.0` tag can publish the immutable OCI Chart and GitHub archive
+A reviewed `weir-0.5.0` tag can publish the immutable OCI Chart and GitHub archive
 with SHA256SUMS after release preflight. Updating the server contract requires
 updating the Chart source annotation and CI source pin together, rerunning these
 checks and qualifying the intended immutable image. Real install/upgrade/rollback,

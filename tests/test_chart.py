@@ -144,11 +144,53 @@ class ChartTests(unittest.TestCase):
         self.assertNotEqual(render(invalid, success=False).returncode, 0)
 
     def test_inline_auth_and_writable_extra_mounts_are_rejected(self):
-        invalid = config_values()
-        invalid["config"]["data"]["routes"]["stores"] = [{"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017", "username": "test-user", "password": "test-password"}}}]
-        self.assertNotEqual(render(invalid, success=False).returncode, 0)
+        for adapter, endpoint in (("mongodb", {"uri": "mongodb://mongo:27017"}),
+                                  ("search", {"url": "https://search:9200"})):
+            with self.subTest(adapter=adapter):
+                invalid = config_values()
+                backend = {adapter: endpoint, "authentication": {"username": "test-user", "password": "test-password"}}
+                invalid["config"]["data"]["routes"]["stores"] = [{"name": adapter, "backend": backend}]
+                result = render(invalid, success=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("config.data cannot contain backend credentials", result.stderr)
         invalid = {"extraVolumeMounts": [{"name": "extra", "mountPath": "/extra", "readOnly": False}]}
         self.assertNotEqual(render(invalid, success=False).returncode, 0)
+
+    def test_removed_authentication_layouts_fail_before_rendering(self):
+        backends = [
+            {"mongodb": {"uri": "mongodb://mongo:27017", "username": "test-user", "password": "test-password"}},
+            {"mongodb": {"uri": "mongodb://mongo:27017", "username_file": "/auth/username", "password_file": "/auth/password"}},
+            {"search": {"url": "https://search:9200", "connection": {"username": "test-user", "password": "test-password"}}},
+            {"search": {"url": "https://search:9200", "connection": {"username_file": "/auth/username", "password_file": "/auth/password"}}},
+            {"search": {"url": "https://search:9200", "connection": {}}},
+            {"search": {"url": "https://search:9200", "connection": None}},
+        ]
+        for field in ("username", "password", "username_file", "password_file"):
+            for value in ("", None):
+                backends.append({"mongodb": {"uri": "mongodb://mongo:27017", field: value}})
+        for backend in backends:
+            with self.subTest(backend=backend):
+                invalid = config_values()
+                invalid["config"]["data"]["routes"]["stores"] = [{"name": "store", "backend": backend}]
+                result = render(invalid, success=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("unsupported; use backend.authentication", result.stderr)
+
+    def test_common_file_authentication_is_rendered_for_both_backends(self):
+        values = config_values()
+        stores = []
+        for adapter, endpoint in (("mongodb", {"uri": "mongodb://mongo:27017/?authSource=admin&authMechanism=SCRAM-SHA-256&tls=true"}),
+                                  ("search", {"url": "https://search:9200"})):
+            backend = {adapter: endpoint,
+                       "authentication": {"username_file": "/auth/username", "password_file": "/auth/password"},
+                       "tls": {"ca_file": "/auth/ca.crt"}}
+            stores.append({"name": adapter, "backend": backend})
+        values["config"]["data"]["routes"]["stores"] = stores
+        resources = render(values)
+        routes = yaml.safe_load(resources["ConfigMap"]["data"]["routes.yaml"])
+        self.assertEqual(routes["stores"], stores)
 
     def test_ci_builds_the_recorded_source_contract(self):
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
