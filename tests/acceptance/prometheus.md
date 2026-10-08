@@ -129,8 +129,8 @@ Queries are explicit metric-name groups plus selectors:
   usage, OOM events, container start time and last_seen. Exact cgroup UID,
   container ID/name, image and node must match the freeze.
 - Application: job=pod + Pod name + fixed instance `IP:7449`; UP, node ready,
-  RPC completions, executions/records, queue entries/limits, active execution/
-  window limit, queue/execution histogram counts/sums, process RSS and Go heap.
+  RPC completions, executions/records, queue entries/bytes and their limits, active
+  executions, queue/execution histogram counts/sums, process RSS and Go heap.
   This source has no namespace/UID labels. KSM preflight plus cgroup identity and
   the observer's continuous fixed UID/container/IP/node records bind its lifetime;
   identical Pod names alone never establish identity.
@@ -155,10 +155,13 @@ up=0 or readiness=0 fails.
 Counters cannot reset. CPU cores derive from adjacent original counter differences
 and actual time differences. Reports distinguish cAdvisor working set/RSS/usage,
 Weir process RSS and Go heap; preserve first/last/min/max and half-window means,
-CPU peak and CPU/memory headroom. Queue/active execution cannot exceed their
-same-scrape frozen capacity metrics. Every Pod must show positive in-run
-Read/Mutate/Bulk and record executions/records for both backends, with no non-OK
-RPC increments. Positive pre-existing counters alone do not satisfy this gate.
+CPU peak and CPU/memory headroom. Waiting queue count and bytes cannot exceed
+their same-scrape capacity metrics.
+Active executions are observed without a configured concurrency ceiling. Every Pod
+must show positive in-run Execute RPC completions and physical executions/records
+for both backends, with no non-OK RPC increments. Operation mix comes from the
+load report because Read and Mutate share the Execute RPC. Positive pre-existing
+counters alone do not satisfy this gate.
 
 The audit reads the actual canonical run configuration and verifies its SHA256
 against the freeze. It checks the declared duration against runner start, every
