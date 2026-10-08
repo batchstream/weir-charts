@@ -124,14 +124,14 @@ def main():
             validate_config(binary, render(replicas, release), directory)
         # Exercise relative credential-file resolution using only generated fixtures.
         files = copy.deepcopy(fixtures[0][1])
-        mongo = files["config"]["data"]["routes"]["stores"][0]["mongodb"]
+        mongo = files["config"]["data"]["routes"]["stores"][0]["backend"]["mongodb"]
         mongo.update(uri="mongodb://mongo:27017/?directConnection=true&authMechanism=SCRAM-SHA-256&authSource=admin&tls=true",
                      username_file="test-user.txt", password_file="test-password.txt")
         (directory / "test-user.txt").write_text("test-user\n")
         (directory / "test-password.txt").write_text("test-password\n")
         validate_config(binary, render(files), directory)
         files = copy.deepcopy(fixtures[1][1])
-        search = files["config"]["data"]["routes"]["stores"][0]["search"]
+        search = files["config"]["data"]["routes"]["stores"][0]["backend"]["search"]
         search.update(url="https://search:9200", connection={"username_file": "test-user.txt", "password_file": "test-password.txt"})
         validate_config(binary, render(files, "search"), directory)
         # A real binary must reject old fields that a permissive Helm object could accept.
