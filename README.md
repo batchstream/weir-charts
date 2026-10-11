@@ -2,7 +2,7 @@
 
 Deploy [Weir](https://github.com/batchstream/weir), a synchronous MongoDB
 and Search data plane, on Kubernetes. Helm 3.17+ and Kubernetes 1.30+ are required.
-Chart 0.5.0 targets the source contract recorded in Chart.yaml's
+Chart 0.6.0 targets Weir v0.2.0 and the source contract recorded in Chart.yaml's
 `weir.batchstream.io/source-revision` annotation. Older configuration using manual memory, concurrency and business timeout
 fields must be updated for this contract.
 
@@ -14,9 +14,11 @@ isolated network. Historical cluster evidence is retained in
 
 ## Install
 
-Build or obtain an image compatible with the recorded source contract, then record
-its immutable digest in your reviewed values. `image.digest` is required. This
-Chart does not assume that a new image has been published. Template tests use a
+The default image digest pins the published Weir v0.2.0 index verified against
+the recorded source contract. Each Pod records that full source revision in a
+Chart-managed annotation. To supply another compatible image, record its
+immutable `image.digest` in your reviewed values. Empty or mutable image
+references are rejected. Template tests use a
 clearly marked dummy digest in `tests/values.yaml`; that fixture is unsuitable
 for installation.
 
@@ -180,7 +182,7 @@ startup/readiness/liveness probes and verifies bounded SIGTERM shutdown. It make
 no backend connections and reads no existing Secrets. CI builds the fixed source
 revision before running the same checks; it packages the Chart as an artifact.
 
-A reviewed `weir-0.5.0` tag can publish the immutable OCI Chart and GitHub archive
+A reviewed `weir-0.6.0` tag can publish the immutable OCI Chart and GitHub archive
 with SHA256SUMS after release preflight. Updating the server contract requires
 updating the Chart source annotation and CI source pin together, rerunning these
 checks and qualifying the intended immutable image. Real install/upgrade/rollback,
@@ -188,4 +190,7 @@ backend, discovery and sustained-load evidence belong in a new acceptance report
 The [persistent acceptance fixtures](tests/acceptance/README.md) retain historical
 v0.1.x context and require adaptation for a current SDK/server pair.
 The [local Kind qualification](docs/acceptance-2026-10-12-local-kind.md) records
-the current functional deployment checks and their limits.
+the functional deployment fixes and their limits. The
+[final published-image qualification](docs/acceptance-2026-10-12-release.md)
+records the Weir v0.2.0 / public SDK v0.10.1 persistent upgrade/rollback checks.
+Public OCI Chart installation is qualified separately after Chart publication.

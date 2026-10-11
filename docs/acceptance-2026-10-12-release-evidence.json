@@ -1,0 +1,497 @@
+{
+  "qualification": "Final published Weir v0.2.0 image, local isolated Kind, 300-second persistent public SDK traffic",
+  "passed": true,
+  "date": "2026-10-12 Asia/Shanghai",
+  "chart": {
+    "version": "0.6.0",
+    "app_version": "8b8973894c46",
+    "base_commit": "43313a89fca9d7af7940e8291f12e37ff209a72b"
+  },
+  "image": {
+    "version": "v0.2.0",
+    "source": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+    "binary_version": "local-8b8973894c4670f0e4173d223d08544727bc2ae9",
+    "index_digest": "sha256:ea12776d93739a9decb5464df51b13219fa34e4ccb10c8a8b2fd8d3f95fe5fbf",
+    "arm64_manifest": "sha256:86ec9226eb09be2649c530d0bfa05d744c6a442ba78278c238263d58faf742a1",
+    "amd64_manifest": "sha256:f8a83600fe7773e1c09ee209ad093a7676aa3fd1153a2631762bf7dcddf68547",
+    "arm64_binary_sha256": "e60d44e7f8f1237ca959b5d10d1b0fe54ec6eb9d6483bbee0a0104cad8fde4ca",
+    "reference": "ghcr.io/batchstream/weir@sha256:ea12776d93739a9decb5464df51b13219fa34e4ccb10c8a8b2fd8d3f95fe5fbf",
+    "version_tag_reference": "ghcr.io/batchstream/weir:v0.2.0",
+    "full_source_tag_reference": "ghcr.io/batchstream/weir:8b8973894c4670f0e4173d223d08544727bc2ae9",
+    "anonymous_version_source_index_match": true,
+    "public_index_body_sha256": "ea12776d93739a9decb5464df51b13219fa34e4ccb10c8a8b2fd8d3f95fe5fbf",
+    "regctl_pin": {
+      "tool": "regctl",
+      "version": "v0.11.6",
+      "platform": "darwin/arm64",
+      "path": "/Users/liran/Projects/liran/go/weir-charts/.testdata/qualification/2026-10-12/tools/regctl",
+      "url": "https://github.com/regclient/regclient/releases/download/v0.11.6/regctl-darwin-arm64",
+      "sha256": "5b52b71861abc300ab513e87a4c3794cff6508035ac7f6b6bdfa1fa5688c0040",
+      "checksum_source": "https://api.github.com/repos/regclient/regclient/releases/tags/v0.11.6"
+    },
+    "registry_credentials_disabled": true,
+    "release_url": "https://github.com/batchstream/weir/releases/tag/v0.2.0",
+    "release_workflow": "https://github.com/batchstream/weir/actions/runs/38175928967"
+  },
+  "sdk": {
+    "version": "v0.10.1",
+    "source": "d196d47e6174c207418abe9a32b15edb4cb05c0e",
+    "module_sum": "h1:ElUNavxTJVT65k0ITIF3rnxa1a1ROEOArjJSCkiunhY=",
+    "protocol": "v0.8.0",
+    "runner_source": "0a4636f99c76e7e3aecd01695941a6ec5ea808a0",
+    "copied_go_source_unchanged": true,
+    "client_sha256": "b36c9605061c3dab61c75ee893fee527d838f7a0c5633091cf4c83c7b7fe4cd4",
+    "module_graph_sha256": "eb65f1d4382145ce9d18aa67441f55955f078b2dd9a2a9b227262eb4f6ccf6b4"
+  },
+  "traffic": {
+    "pid": 29,
+    "duration_seconds": 300,
+    "start_utc": "2026-10-11T21:36:46.421211+00:00",
+    "end_utc": "2026-10-11T21:41:46.421211+00:00",
+    "warmup_successes": 2785,
+    "timed_result": {
+      "business_operation_timeouts": 0,
+      "path": "weir",
+      "planned": 279287,
+      "attempted": 279287,
+      "succeeded": 279287,
+      "errors": 0,
+      "indeterminate": 0,
+      "not_attempted": 0,
+      "applied_with_error": 0,
+      "elapsed_ns": 300006174759,
+      "successful_operations_per_second": 930.9375056175292,
+      "logical_request_document_bytes": 12204099,
+      "logical_response_document_bytes": 30304180,
+      "verified": false,
+      "latency": {
+        "samples": 279287,
+        "p50_upper_bound_ns": 5631000,
+        "p95_upper_bound_ns": 9215000,
+        "p99_upper_bound_ns": 11263000,
+        "max_observed_ns": 190585833,
+        "method": "256 fixed logarithmic buckets, 8 subdivisions/power-of-two, microsecond rounding; quantiles are inclusive bucket upper bounds (<=12.5% plus 1us); final overflow bucket uses observed maximum"
+      },
+      "evidence": {
+        "protocol": "published SDK v0.10.1 Execute",
+        "endpoint": "weir-weir.weir-chart-test.svc.cluster.local:7447",
+        "backend_version": "8.0.32",
+        "byte_scope": "",
+        "write_policy": "",
+        "retry_policy": "SDK never replays business requests",
+        "client_batch": ""
+      }
+    },
+    "reads": 139010,
+    "lua_mutations": 140277,
+    "same_sdk_process_across_both_rollouts": true,
+    "business_mutations_replayed": false
+  },
+  "rollouts": {
+    "events": [
+      {
+        "event": "client-started",
+        "unix_ns": 1791754597422951000
+      },
+      {
+        "event": "upgrade-started",
+        "unix_ns": 1791754611533379000
+      },
+      {
+        "event": "final-upgraded-all-old-pods-removed-three-ready",
+        "unix_ns": 1791754663061444000
+      },
+      {
+        "event": "rollback-started",
+        "unix_ns": 1791754663237101000
+      },
+      {
+        "event": "final-rolled-back-all-old-pods-removed-three-ready",
+        "unix_ns": 1791754714944005000
+      },
+      {
+        "event": "both-rollouts-complete-inside-timed-window",
+        "unix_ns": 1791754714944523000
+      },
+      {
+        "event": "client-finished-exit-0",
+        "unix_ns": 1791754906482604000
+      },
+      {
+        "event": "same-sdk-pid-zero-errors-zero-unknown-passed",
+        "unix_ns": 1791754906483066000
+      }
+    ],
+    "upgrade_complete_seconds": 56.640233,
+    "rollback_complete_seconds": 108.522794,
+    "six_old_container_exits": [
+      {
+        "name": "weir-weir-9fbfb9484-gbb2l",
+        "uid": "26e2ea1f-9895-4453-a9e8-8410d720034d",
+        "exit_code": 0,
+        "reason": "Completed",
+        "finished_at": "2026-10-11T21:37:07Z"
+      },
+      {
+        "name": "weir-weir-9fbfb9484-d6xb4",
+        "uid": "acae3856-a56a-491a-aa22-a138c2017502",
+        "exit_code": 0,
+        "reason": "Completed",
+        "finished_at": "2026-10-11T21:37:25Z"
+      },
+      {
+        "name": "weir-weir-9fbfb9484-r962c",
+        "uid": "a9ae1661-6eb6-405e-8023-a6ff84de937c",
+        "exit_code": 0,
+        "reason": "Completed",
+        "finished_at": "2026-10-11T21:37:42Z"
+      },
+      {
+        "name": "weir-weir-b4fc7cdb5-n5vx5",
+        "uid": "d48a8a1c-1cf7-463f-9c04-a8db9149e5f7",
+        "exit_code": 0,
+        "reason": "Completed",
+        "finished_at": "2026-10-11T21:37:58Z"
+      },
+      {
+        "name": "weir-weir-b4fc7cdb5-zkt58",
+        "uid": "465db8d0-2192-4b14-8328-f3d4648039ae",
+        "exit_code": 0,
+        "reason": "Completed",
+        "finished_at": "2026-10-11T21:38:16Z"
+      },
+      {
+        "name": "weir-weir-b4fc7cdb5-tzfcn",
+        "uid": "bb0ce350-127c-43fe-8f74-4d1cc262f0d7",
+        "exit_code": 0,
+        "reason": "Completed",
+        "finished_at": "2026-10-11T21:38:34Z"
+      }
+    ]
+  },
+  "postflight": {
+    "namespace": "weirtest_c344992c85f7b6075a6cfef3",
+    "documents": 64,
+    "expected_revisions": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      1,
+      1,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      1,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "all_fields_exact": true,
+    "revision_bson_type": "int32",
+    "passed": true
+  },
+  "replicas": [
+    {
+      "name": "weir-weir-9fbfb9484-5t2kr",
+      "uid": "773fa088-b9a9-4427-9e06-3c8d867dc6f2",
+      "pod_ip": "10.244.2.24",
+      "node": "weir-chart-qualification-worker2",
+      "container_id": "containerd://fb7ba1c04ecf55a91a34a8fc1c20ac67c3fd6d047747382b0fc06d12e21060f4",
+      "kubelet_image_id": "docker.io/library/import-2026-10-11@sha256:9ad572d450088090d294600906d6a897e52cff8b80ad76c235f15159aa04ca40",
+      "declared_image": "ghcr.io/batchstream/weir@sha256:ea12776d93739a9decb5464df51b13219fa34e4ccb10c8a8b2fd8d3f95fe5fbf",
+      "source_annotation": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+      "execute_ok": 68126,
+      "peer_sync_directory_ok": 329,
+      "directory_live_nodes": 3,
+      "ready": true,
+      "restarts": 0
+    },
+    {
+      "name": "weir-weir-9fbfb9484-7qts7",
+      "uid": "34825b6f-076c-49b6-b454-a765e3a9735d",
+      "pod_ip": "10.244.1.22",
+      "node": "weir-chart-qualification-worker",
+      "container_id": "containerd://ab2af574cc24d4b41d86bb2cfc42c68c3b42478dd06b15ef3a9dfb1733f890ec",
+      "kubelet_image_id": "docker.io/library/import-2026-10-11@sha256:9ad572d450088090d294600906d6a897e52cff8b80ad76c235f15159aa04ca40",
+      "declared_image": "ghcr.io/batchstream/weir@sha256:ea12776d93739a9decb5464df51b13219fa34e4ccb10c8a8b2fd8d3f95fe5fbf",
+      "source_annotation": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+      "execute_ok": 74355,
+      "peer_sync_directory_ok": 341,
+      "directory_live_nodes": 3,
+      "ready": true,
+      "restarts": 0
+    },
+    {
+      "name": "weir-weir-9fbfb9484-mxdmg",
+      "uid": "e12bb920-2111-4d70-a97e-07d0ddf676a5",
+      "pod_ip": "10.244.1.23",
+      "node": "weir-chart-qualification-worker",
+      "container_id": "containerd://20cc9924b8d33aef462ea62be9bab1d4bb01c4e3c66ef1155e40d7af439c993b",
+      "kubelet_image_id": "docker.io/library/import-2026-10-11@sha256:9ad572d450088090d294600906d6a897e52cff8b80ad76c235f15159aa04ca40",
+      "declared_image": "ghcr.io/batchstream/weir@sha256:ea12776d93739a9decb5464df51b13219fa34e4ccb10c8a8b2fd8d3f95fe5fbf",
+      "source_annotation": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+      "execute_ok": 61899,
+      "peer_sync_directory_ok": 283,
+      "directory_live_nodes": 3,
+      "ready": true,
+      "restarts": 0
+    }
+  ],
+  "runtime_security": [
+    {
+      "name": "weir-weir-9fbfb9484-5t2kr",
+      "uid": "773fa088-b9a9-4427-9e06-3c8d867dc6f2",
+      "node": "weir-chart-qualification-worker2",
+      "pod_ip": "10.244.2.24",
+      "container_id": "fb7ba1c04ecf55a91a34a8fc1c20ac67c3fd6d047747382b0fc06d12e21060f4",
+      "image_id": "docker.io/library/import-2026-10-11@sha256:9ad572d450088090d294600906d6a897e52cff8b80ad76c235f15159aa04ca40",
+      "node_process_pid": 105088,
+      "args": [
+        "/weir",
+        "serve",
+        "--config",
+        "/etc/weir/node.yaml",
+        "--routes",
+        "/etc/weir/routes.yaml"
+      ],
+      "user": {
+        "additionalGids": [
+          65532
+        ],
+        "gid": 65532,
+        "uid": 65532
+      },
+      "readonly_root": true,
+      "no_new_privileges": true,
+      "capabilities": {},
+      "seccomp_default_action": "SCMP_ACT_ERRNO",
+      "main_process_children": "",
+      "process_status": [
+        "Name:\tweir",
+        "Uid:\t65532\t65532\t65532\t65532",
+        "Gid:\t65532\t65532\t65532\t65532",
+        "NSpid:\t105088\t1",
+        "CapEff:\t0000000000000000",
+        "NoNewPrivs:\t1",
+        "Seccomp:\t2"
+      ],
+      "source_annotation": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+      "binary_sha256": "e60d44e7f8f1237ca959b5d10d1b0fe54ec6eb9d6483bbee0a0104cad8fde4ca",
+      "version": {
+        "product": "weir",
+        "version": "local-8b8973894c4670f0e4173d223d08544727bc2ae9",
+        "revision": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+        "go": "go1.27.1",
+        "target": "linux/arm64",
+        "state": "clean-commit",
+        "dirty": "false"
+      }
+    },
+    {
+      "name": "weir-weir-9fbfb9484-7qts7",
+      "uid": "34825b6f-076c-49b6-b454-a765e3a9735d",
+      "node": "weir-chart-qualification-worker",
+      "pod_ip": "10.244.1.22",
+      "container_id": "ab2af574cc24d4b41d86bb2cfc42c68c3b42478dd06b15ef3a9dfb1733f890ec",
+      "image_id": "docker.io/library/import-2026-10-11@sha256:9ad572d450088090d294600906d6a897e52cff8b80ad76c235f15159aa04ca40",
+      "node_process_pid": 68695,
+      "args": [
+        "/weir",
+        "serve",
+        "--config",
+        "/etc/weir/node.yaml",
+        "--routes",
+        "/etc/weir/routes.yaml"
+      ],
+      "user": {
+        "additionalGids": [
+          65532
+        ],
+        "gid": 65532,
+        "uid": 65532
+      },
+      "readonly_root": true,
+      "no_new_privileges": true,
+      "capabilities": {},
+      "seccomp_default_action": "SCMP_ACT_ERRNO",
+      "main_process_children": "",
+      "process_status": [
+        "Name:\tweir",
+        "Uid:\t65532\t65532\t65532\t65532",
+        "Gid:\t65532\t65532\t65532\t65532",
+        "NSpid:\t68695\t1",
+        "CapEff:\t0000000000000000",
+        "NoNewPrivs:\t1",
+        "Seccomp:\t2"
+      ],
+      "source_annotation": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+      "binary_sha256": "e60d44e7f8f1237ca959b5d10d1b0fe54ec6eb9d6483bbee0a0104cad8fde4ca",
+      "version": {
+        "product": "weir",
+        "version": "local-8b8973894c4670f0e4173d223d08544727bc2ae9",
+        "revision": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+        "go": "go1.27.1",
+        "target": "linux/arm64",
+        "state": "clean-commit",
+        "dirty": "false"
+      }
+    },
+    {
+      "name": "weir-weir-9fbfb9484-mxdmg",
+      "uid": "e12bb920-2111-4d70-a97e-07d0ddf676a5",
+      "node": "weir-chart-qualification-worker",
+      "pod_ip": "10.244.1.23",
+      "container_id": "20cc9924b8d33aef462ea62be9bab1d4bb01c4e3c66ef1155e40d7af439c993b",
+      "image_id": "docker.io/library/import-2026-10-11@sha256:9ad572d450088090d294600906d6a897e52cff8b80ad76c235f15159aa04ca40",
+      "node_process_pid": 70071,
+      "args": [
+        "/weir",
+        "serve",
+        "--config",
+        "/etc/weir/node.yaml",
+        "--routes",
+        "/etc/weir/routes.yaml"
+      ],
+      "user": {
+        "additionalGids": [
+          65532
+        ],
+        "gid": 65532,
+        "uid": 65532
+      },
+      "readonly_root": true,
+      "no_new_privileges": true,
+      "capabilities": {},
+      "seccomp_default_action": "SCMP_ACT_ERRNO",
+      "main_process_children": "",
+      "process_status": [
+        "Name:\tweir",
+        "Uid:\t65532\t65532\t65532\t65532",
+        "Gid:\t65532\t65532\t65532\t65532",
+        "NSpid:\t70071\t1",
+        "CapEff:\t0000000000000000",
+        "NoNewPrivs:\t1",
+        "Seccomp:\t2"
+      ],
+      "source_annotation": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+      "binary_sha256": "e60d44e7f8f1237ca959b5d10d1b0fe54ec6eb9d6483bbee0a0104cad8fde4ca",
+      "version": {
+        "product": "weir",
+        "version": "local-8b8973894c4670f0e4173d223d08544727bc2ae9",
+        "revision": "8b8973894c4670f0e4173d223d08544727bc2ae9",
+        "go": "go1.27.1",
+        "target": "linux/arm64",
+        "state": "clean-commit",
+        "dirty": "false"
+      }
+    }
+  ],
+  "content_proof": {
+    "passed": true,
+    "import_wrapper": "sha256:9ad572d450088090d294600906d6a897e52cff8b80ad76c235f15159aa04ca40",
+    "published_index": "sha256:ea12776d93739a9decb5464df51b13219fa34e4ccb10c8a8b2fd8d3f95fe5fbf",
+    "selected_arm64_manifest": "sha256:86ec9226eb09be2649c530d0bfa05d744c6a442ba78278c238263d58faf742a1",
+    "selected_config_digest": "sha256:f996a44d185b316d1e40bf9a1405bac615d19b6e88bb32e981037f4dcc2f2a00",
+    "rootfs_chain_id": "sha256:1a9291c17ca2da8ece8e35742a7d2842fffb99ae094aed6edcaf28e4fa29f781",
+    "all_three_nodes_all_descriptor_layer_hashes_verified": true,
+    "fourteen_uncompressed_layer_diff_ids_verified": true,
+    "running_snapshot_parent_matches": true,
+    "metadata_aliases_removed_or_rewritten": false
+  },
+  "network": {
+    "actual_cni_enforcement": true,
+    "app_service_and_three_ready_headless_dns": true,
+    "application_metrics_peer_allow_and_deny_per_replica": true,
+    "command_count": 33,
+    "cni": "kindnetd:v20260820-69b56db7"
+  },
+  "backend": {
+    "version": "8.0.32",
+    "port": 27029,
+    "replica_set": "weir_chart",
+    "native_pid": 49775,
+    "task_owned_separate_from_service_fault_tests": true
+  },
+  "validation": {
+    "make_package": "PASS",
+    "python_tests": 32,
+    "strict_lint_overlays": 4,
+    "published_native_binary_contract_and_serve_probes_shutdown": "PASS",
+    "go_observer_race": "PASS"
+  },
+  "limits": [
+    "Local isolated cluster only; no production resources contacted",
+    "300 seconds functional qualification; historical 24-hour gate and production capacity incomplete",
+    "Linux arm64 Pod workload only; release pipeline independently qualifies amd64 startup",
+    "Native macOS arm64 Mongo8.0.32 used because Docker Linux kernel rejected locked Mongo8.0 image",
+    "Plaintext transport requires trusted isolated network",
+    "Search fixtures remain covered by separate Weir service qualification, not this Mongo-only Pod workload"
+  ],
+  "candidate_evidence": "../candidate-local-kind/index.md",
+  "raw_evidence": {
+    "directory": "/Users/liran/Projects/liran/go/weir-charts/.testdata/qualification/2026-10-12/final-published-image",
+    "archive": "final-published-image-raw.tar.gz",
+    "archive_sha256": "d376b622ca72543836485153fc7361a6f140813a34a9024b4ace6243ea7d0a9a",
+    "raw_files": 89,
+    "manifest": "raw-manifest.json",
+    "oci_archive_stored_separately": "weir-v0.2.0.oci.tar",
+    "oci_archive_checksum": {
+      "file": "weir-v0.2.0.oci.tar",
+      "bytes": 32787456,
+      "sha256": "179a94865e6d5ae255b28a28845a7f6364699f8fd8afc7abbd1586bed3ab1d1a",
+      "complete_anonymous_export": true
+    }
+  }
+}
