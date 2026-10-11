@@ -26,6 +26,7 @@ spec:
       annotations:
         checksum/config: {{ .Values.config.data | toJson | sha256sum }}
         weir.batchstream.io/config-revision: {{ .Values.config.revision | quote }}
+        weir.batchstream.io/source-revision: {{ index .Chart.Annotations "weir.batchstream.io/source-revision" | quote }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

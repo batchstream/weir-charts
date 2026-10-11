@@ -18,6 +18,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{ printf "%s@%s" .Values.image.repository (required "image.digest must identify a compatible immutable Weir image" .Values.image.digest) }}
 {{- end -}}
 {{- define "weir.validate" -}}
+{{- if hasKey .Values.podAnnotations "weir.batchstream.io/source-revision" -}}
+{{- fail "weir.batchstream.io/source-revision is managed by the Chart and cannot be overridden in podAnnotations" -}}
+{{- end -}}
 {{- if lt (int .Values.terminationGracePeriodSeconds) (add (int .Values.preStopDelaySeconds) 10) -}}
 {{- fail "terminationGracePeriodSeconds must allow preStopDelaySeconds plus at least 10 seconds for Weir shutdown" -}}
 {{- end -}}

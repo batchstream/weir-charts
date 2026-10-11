@@ -222,6 +222,10 @@ class ChartTests(unittest.TestCase):
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
         revision = chart["annotations"]["weir.batchstream.io/source-revision"]
         self.assertEqual(len(revision), 40)
+        self.assertEqual(chart["appVersion"], revision[:12])
+        resources = render()
+        annotations = resources["Deployment"]["spec"]["template"]["metadata"]["annotations"]
+        self.assertEqual(annotations["weir.batchstream.io/source-revision"], revision)
         for name in ("ci.yaml", "release.yaml"):
             workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
             steps = next(iter(workflow["jobs"].values()))["steps"]
@@ -238,6 +242,7 @@ class ChartTests(unittest.TestCase):
             {"image": {"digest": "sha256:bad"}},
             {"config": {"key": "node.json"}},
             {"image": {"digest": ""}},
+            {"podAnnotations": {"weir.batchstream.io/source-revision": "unverified"}},
             {"config": {"existingSecret": ""}},
             {"config": {"data": {"services": []}}},
             {"podDisruptionBudget": {"enabled": True}},
