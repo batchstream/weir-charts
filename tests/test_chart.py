@@ -92,6 +92,10 @@ class ChartTests(unittest.TestCase):
         values = {"replicaCount": 3, "podDisruptionBudget": {"enabled": True}, "peer": {"enabled": True}}
         resources = render(values)
         self.assertEqual(resources["Deployment"]["spec"]["replicas"], 3)
+        self.assertEqual(resources["Deployment"]["spec"]["minReadySeconds"], 15)
+        pod = resources["Deployment"]["spec"]["template"]["spec"]
+        self.assertEqual(pod["terminationGracePeriodSeconds"], 45)
+        self.assertEqual(pod["containers"][0]["lifecycle"]["preStop"]["sleep"]["seconds"], 15)
         expected_rolling = {"maxSurge": 0, "maxUnavailable": 1}
         self.assertEqual(resources["Deployment"]["spec"]["strategy"]["rollingUpdate"], expected_rolling)
         self.assertEqual(resources["PodDisruptionBudget"]["spec"]["maxUnavailable"], 1)
@@ -115,11 +119,33 @@ class ChartTests(unittest.TestCase):
         values["config"]["data"]["node"]["diagnostics"]["address"] = "[::]:7449"
         self.assertIn("ConfigMap", render(values))
 
+    def test_three_replica_overlay_excludes_untolerated_nodes_from_spread(self):
+        values = yaml.safe_load((ROOT / "examples/three-replicas.yaml").read_text())
+        resources = render(values)
+        pod = resources["Deployment"]["spec"]["template"]["spec"]
+        self.assertEqual(pod["topologySpreadConstraints"][0]["nodeTaintsPolicy"], "Honor")
+        self.assertEqual(pod["topologySpreadConstraints"][0]["minDomains"], 2)
+
+    def test_kubernetes_examples_use_absolute_cluster_dns(self):
+        filenames = ("examples/mongo.yaml", "examples/search.yaml", "tests/acceptance/local-kind/values.yaml")
+        for filename in filenames:
+            values = yaml.safe_load((ROOT / filename).read_text())
+            discovery = values["config"]["data"]["node"]["discovery"]
+            for address in discovery["seeds"] + discovery["advertise"]:
+                self.assertTrue(address.rsplit(":", 1)[0].endswith(".svc.cluster.local"), address)
+        run = json.loads((ROOT / "tests/acceptance/run.example.json").read_text())
+        self.assertTrue(run["address"].rsplit(":", 1)[0].endswith(".svc.cluster.local"))
+
     def test_recreate_has_no_incompatible_rolling_settings(self):
         values = {"strategy": {"type": "Recreate"}}
         strategy = render(values)["Deployment"]["spec"]["strategy"]
         expected = {"type": "Recreate"}
         self.assertEqual(strategy, expected)
+
+    def test_pre_stop_sleep_can_be_disabled_without_an_extra_process(self):
+        values = {"preStopDelaySeconds": 0}
+        pod = render(values)["Deployment"]["spec"]["template"]["spec"]
+        self.assertNotIn("lifecycle", pod["containers"][0])
 
     def test_acceptance_annotations_use_existing_pod_discovery(self):
         overlay = yaml.safe_load((ROOT / 'tests/acceptance/prometheus-values.yaml').read_text())
@@ -205,6 +231,9 @@ class ChartTests(unittest.TestCase):
     def test_invalid_values_fail_before_cluster_mutation(self):
         for invalid in (
             {"metrics": {"enabled": True}}, {"replicaCount": 0}, {"containerPort": 70000},
+            {"minReadySeconds": -1}, {"minReadySeconds": 180},
+            {"preStopDelaySeconds": -1}, {"preStopDelaySeconds": 291},
+            {"terminationGracePeriodSeconds": 20},
             {"terminationGracePeriodSeconds": 4}, {"unknownSetting": True},
             {"image": {"digest": "sha256:bad"}},
             {"config": {"key": "node.json"}},

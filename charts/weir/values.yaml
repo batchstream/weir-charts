@@ -1,4 +1,6 @@
 replicaCount: 1
+# Allow the default SDK discovery/DNS refresh to observe each replacement.
+minReadySeconds: 15
 nameOverride: ""
 fullnameOverride: ""
 image:
@@ -36,7 +38,9 @@ resources:
   limits:
     cpu: "2"
     memory: 3Gi
-terminationGracePeriodSeconds: 15
+# Kubelet sleeps while terminating Pod addresses leave SDK discovery, then sends SIGTERM.
+preStopDelaySeconds: 15
+terminationGracePeriodSeconds: 45
 # No surge: still budget terminating Pods alongside replacements.
 strategy:
   type: RollingUpdate

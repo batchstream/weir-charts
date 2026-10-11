@@ -14,8 +14,8 @@ config:
       discovery:
         group: application-mongo
         peer_address_env: WEIR_PEER_ADDRESS
-        seeds: [weir-seed.application.svc:7448]
-        advertise: [weir-weir-headless.application.svc:7447]
+        seeds: [weir-seed.application.svc.cluster.local:7448]
+        advertise: [weir-weir-headless.application.svc.cluster.local:7447]
     routes:
       stores:
         - name: mongo

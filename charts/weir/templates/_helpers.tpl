@@ -18,6 +18,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{ printf "%s@%s" .Values.image.repository (required "image.digest must identify a compatible immutable Weir image" .Values.image.digest) }}
 {{- end -}}
 {{- define "weir.validate" -}}
+{{- if lt (int .Values.terminationGracePeriodSeconds) (add (int .Values.preStopDelaySeconds) 10) -}}
+{{- fail "terminationGracePeriodSeconds must allow preStopDelaySeconds plus at least 10 seconds for Weir shutdown" -}}
+{{- end -}}
 {{- if and .Values.config.existingSecret .Values.config.data -}}
 {{- fail "config.existingSecret and config.data are mutually exclusive" -}}
 {{- end -}}

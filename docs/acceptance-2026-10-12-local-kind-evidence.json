@@ -1,0 +1,567 @@
+{
+  "schema": 1,
+  "scope": "isolated local Kubernetes functional qualification; final release image and long-term acceptance pending",
+  "source": "d5ad652e30ccf381678b911816059fe36faff955",
+  "oci_index": "sha256:2b5b1f6962fdacb9924b7c95a10a5e3b16e8fc9f7b59da6fcd1d58b8ac551e96",
+  "arm64_manifest": "sha256:52ca569f79fa3cdc475990b0bc8e6f19a38ae3b4a734e5e48254d44f60aa3a6d",
+  "runner_source": "0a4636f99c76e7e3aecd01695941a6ec5ea808a0",
+  "sdk": "v0.10.0",
+  "protocol": "v0.8.0",
+  "weir_lab_sha256": "f14a8198aed268fd3e545f25f5c1d40748bfcc6ed5d519cc894be729066a8e7a",
+  "weir_bench_sha256": "f931a2676f4379070aa0e14e1afb464cabb3012d0f85ac357234ff7c8a115e2d",
+  "warmup": {
+    "business_operation_timeouts": 0,
+    "path": "weir",
+    "planned": 2859,
+    "attempted": 2859,
+    "succeeded": 2859,
+    "errors": 0,
+    "indeterminate": 0,
+    "not_attempted": 0,
+    "applied_with_error": 0,
+    "elapsed_ns": 3004584722,
+    "successful_operations_per_second": 951.5458089984922,
+    "logical_request_document_bytes": 126237,
+    "logical_response_document_bytes": 306944,
+    "verified": false,
+    "latency": {
+      "samples": 2859,
+      "p50_upper_bound_ns": 6143000,
+      "p95_upper_bound_ns": 9215000,
+      "p99_upper_bound_ns": 11263000,
+      "max_observed_ns": 16275500,
+      "method": "256 fixed logarithmic buckets, 8 subdivisions/power-of-two, microsecond rounding; quantiles are inclusive bucket upper bounds (<=12.5% plus 1us); final overflow bucket uses observed maximum"
+    },
+    "evidence": {
+      "protocol": "published SDK Execute",
+      "endpoint": "10.96.229.238:7447",
+      "backend_version": "8.0.32",
+      "byte_scope": "",
+      "write_policy": "",
+      "retry_policy": "SDK never replays business requests",
+      "client_batch": ""
+    }
+  },
+  "timed": {
+    "sdk_process_pid": 386,
+    "one_pid_for_ready_warmup_timed": true,
+    "sdk_reopened": false,
+    "business_replay": false,
+    "start_utc": "2026-10-11T20:56:17.995595+00:00",
+    "end_utc": "2026-10-11T21:01:17.995595+00:00",
+    "requested_duration_seconds": 300,
+    "reads": 110850,
+    "lua_mutations": 111745,
+    "result": {
+      "business_operation_timeouts": 0,
+      "path": "weir",
+      "planned": 222595,
+      "attempted": 222595,
+      "succeeded": 222595,
+      "errors": 0,
+      "indeterminate": 0,
+      "not_attempted": 0,
+      "applied_with_error": 0,
+      "elapsed_ns": 300171828845,
+      "successful_operations_per_second": 741.558596143083,
+      "logical_request_document_bytes": 9721815,
+      "logical_response_document_bytes": 24165300,
+      "verified": false,
+      "latency": {
+        "samples": 222595,
+        "p50_upper_bound_ns": 6143000,
+        "p95_upper_bound_ns": 12287000,
+        "p99_upper_bound_ns": 24575000,
+        "max_observed_ns": 3215174002,
+        "method": "256 fixed logarithmic buckets, 8 subdivisions/power-of-two, microsecond rounding; quantiles are inclusive bucket upper bounds (<=12.5% plus 1us); final overflow bucket uses observed maximum"
+      },
+      "evidence": {
+        "protocol": "published SDK Execute",
+        "endpoint": "10.96.229.238:7447",
+        "backend_version": "8.0.32",
+        "byte_scope": "",
+        "write_policy": "",
+        "retry_policy": "SDK never replays business requests",
+        "client_batch": ""
+      }
+    }
+  },
+  "rollout_coordination": [
+    {
+      "event": "client-started",
+      "unix_ns": 1791752168997699000
+    },
+    {
+      "event": "upgrade-started",
+      "unix_ns": 1791752183156487000
+    },
+    {
+      "event": "guarded-upgraded-all-old-pods-removed-three-ready",
+      "unix_ns": 1791752235173865000
+    },
+    {
+      "event": "rollback-started",
+      "unix_ns": 1791752235583771000
+    },
+    {
+      "event": "guarded-rolled-back-all-old-pods-removed-three-ready",
+      "unix_ns": 1791752288120237000
+    },
+    {
+      "event": "both-rollouts-complete-inside-timed-window",
+      "unix_ns": 1791752288124939000
+    },
+    {
+      "event": "client-finished",
+      "unix_ns": 1791752478467375000
+    },
+    {
+      "event": "same-sdk-pid-zero-errors-zero-unknown-passed",
+      "unix_ns": 1791752478472362000
+    }
+  ],
+  "six_clean_retirements": [
+    {
+      "name": "weir-weir-7778878d9-57ptv",
+      "uid": "9ca99d1e-f386-4dfb-9bbf-00693fa701c9",
+      "deletion_timestamp": "2026-10-11T20:56:39Z",
+      "terminated": {
+        "containerID": "containerd://439e7252cdd5e9b84b86a0b8d9581dae67bc86d3c9ef38391a31b75f15b57f6f",
+        "exitCode": 0,
+        "finishedAt": "2026-10-11T20:56:38Z",
+        "reason": "Completed",
+        "startedAt": "2026-10-11T20:54:29Z"
+      }
+    },
+    {
+      "name": "weir-weir-7778878d9-7fkff",
+      "uid": "6baa4a6d-b91c-4251-b23f-7fefb2626389",
+      "deletion_timestamp": "2026-10-11T20:56:56Z",
+      "terminated": {
+        "containerID": "containerd://f861972a9d503373003f3921a7b28c7c4a7b78edf998c43cd5fefe20ecf7aa64",
+        "exitCode": 0,
+        "finishedAt": "2026-10-11T20:56:56Z",
+        "reason": "Completed",
+        "startedAt": "2026-10-11T20:54:46Z"
+      }
+    },
+    {
+      "name": "weir-weir-7778878d9-9tsj7",
+      "uid": "ecf74d04-817c-45ff-82ba-f7d2f683f91e",
+      "deletion_timestamp": "2026-10-11T20:57:13Z",
+      "terminated": {
+        "containerID": "containerd://2fa1e5795c8cfb5689b7b6d2f30fa701c600cfeec9618aa80e452caf0f1c8676",
+        "exitCode": 0,
+        "finishedAt": "2026-10-11T20:57:13Z",
+        "reason": "Completed",
+        "startedAt": "2026-10-11T20:55:03Z"
+      }
+    },
+    {
+      "name": "weir-weir-5d64b44fdd-bnxqw",
+      "uid": "245b3f7a-eecf-4c76-ac36-2bd9578403f3",
+      "deletion_timestamp": "2026-10-11T20:57:32Z",
+      "terminated": {
+        "containerID": "containerd://f213734791f380f6791b1779102c94c24494e4ccbc14b210294ea72be813a27b",
+        "exitCode": 0,
+        "finishedAt": "2026-10-11T20:57:31Z",
+        "reason": "Completed",
+        "startedAt": "2026-10-11T20:56:58Z"
+      }
+    },
+    {
+      "name": "weir-weir-5d64b44fdd-w9pqx",
+      "uid": "8740e8bb-09fd-4a27-80fc-5c97dcff1453",
+      "deletion_timestamp": "2026-10-11T20:57:49Z",
+      "terminated": {
+        "containerID": "containerd://6e8de24206d81bcf6e6c9d8fec02edc9ba284093bc0d86692ef41a2f381e3c60",
+        "exitCode": 0,
+        "finishedAt": "2026-10-11T20:57:48Z",
+        "reason": "Completed",
+        "startedAt": "2026-10-11T20:56:41Z"
+      }
+    },
+    {
+      "name": "weir-weir-5d64b44fdd-84mtb",
+      "uid": "56b1240d-3c55-4702-a08c-9bb54e91499d",
+      "deletion_timestamp": "2026-10-11T20:58:07Z",
+      "terminated": {
+        "containerID": "containerd://f498d1414b666cafa0358cf5a6851afbbb0be41f456edb5d99b26bd5c77a8f5f",
+        "exitCode": 0,
+        "finishedAt": "2026-10-11T20:58:06Z",
+        "reason": "Completed",
+        "startedAt": "2026-10-11T20:56:24Z"
+      }
+    }
+  ],
+  "final_identities": [
+    {
+      "name": "weir-weir-7778878d9-hgbcb",
+      "uid": "95980192-0974-4aab-94e2-aafe080c953f",
+      "ip": "10.244.2.18",
+      "node": "weir-chart-qualification-worker2",
+      "container_id": "containerd://c4d69cf1d2fc635e16220dd40fe326574c4c99fbfb79d9f97880955177bdd68a",
+      "image_id": "docker.io/library/import-2026-10-11@sha256:7f29cb42d65b2aa0b3d531f3d513aa4895062a592b902a84a5d3b845f42ee95a",
+      "image": "docker.io/library/weir-qualification@sha256:2b5b1f6962fdacb9924b7c95a10a5e3b16e8fc9f7b59da6fcd1d58b8ac551e96"
+    },
+    {
+      "name": "weir-weir-7778878d9-kxq7g",
+      "uid": "a0b79ac6-648d-4b7a-bbb5-2f67356a168c",
+      "ip": "10.244.1.16",
+      "node": "weir-chart-qualification-worker",
+      "container_id": "containerd://de7f161580de2c4239a21878ef67a884892b5b1969ccd8254c434fc8fbac20bc",
+      "image_id": "docker.io/library/import-2026-10-11@sha256:7f29cb42d65b2aa0b3d531f3d513aa4895062a592b902a84a5d3b845f42ee95a",
+      "image": "docker.io/library/weir-qualification@sha256:2b5b1f6962fdacb9924b7c95a10a5e3b16e8fc9f7b59da6fcd1d58b8ac551e96"
+    },
+    {
+      "name": "weir-weir-7778878d9-rmdcc",
+      "uid": "1b83e192-28ca-4756-aa53-7f1a6cfef167",
+      "ip": "10.244.2.19",
+      "node": "weir-chart-qualification-worker2",
+      "container_id": "containerd://d62d260fc4b99cdd383620ea7d18a0a23476f7bbf05bf8da911d865382fa32d6",
+      "image_id": "docker.io/library/import-2026-10-11@sha256:7f29cb42d65b2aa0b3d531f3d513aa4895062a592b902a84a5d3b845f42ee95a",
+      "image": "docker.io/library/weir-qualification@sha256:2b5b1f6962fdacb9924b7c95a10a5e3b16e8fc9f7b59da6fcd1d58b8ac551e96"
+    }
+  ],
+  "pod_versions": [
+    {
+      "product": "weir",
+      "version": "local-d5ad652e30ccf381678b911816059fe36faff955",
+      "revision": "d5ad652e30ccf381678b911816059fe36faff955",
+      "go": "go1.27.1",
+      "target": "linux/arm64",
+      "state": "clean-commit",
+      "dirty": "false"
+    },
+    {
+      "product": "weir",
+      "version": "local-d5ad652e30ccf381678b911816059fe36faff955",
+      "revision": "d5ad652e30ccf381678b911816059fe36faff955",
+      "go": "go1.27.1",
+      "target": "linux/arm64",
+      "state": "clean-commit",
+      "dirty": "false"
+    },
+    {
+      "product": "weir",
+      "version": "local-d5ad652e30ccf381678b911816059fe36faff955",
+      "revision": "d5ad652e30ccf381678b911816059fe36faff955",
+      "go": "go1.27.1",
+      "target": "linux/arm64",
+      "state": "clean-commit",
+      "dirty": "false"
+    }
+  ],
+  "per_pod_metrics": [
+    {
+      "name": "weir-weir-7778878d9-hgbcb",
+      "application_execute_ok": 22990,
+      "peer_sync_directory_ok": 114,
+      "directory_live_nodes": 3,
+      "captured_utc": "2026-10-11T20:58:51.164377+00:00"
+    },
+    {
+      "name": "weir-weir-7778878d9-kxq7g",
+      "application_execute_ok": 20744,
+      "peer_sync_directory_ok": 100,
+      "directory_live_nodes": 3,
+      "captured_utc": "2026-10-11T20:59:00.600163+00:00"
+    },
+    {
+      "name": "weir-weir-7778878d9-rmdcc",
+      "application_execute_ok": 18327,
+      "peer_sync_directory_ok": 88,
+      "directory_live_nodes": 3,
+      "captured_utc": "2026-10-11T20:59:09.223825+00:00"
+    }
+  ],
+  "runtime_security": [
+    {
+      "name": "weir-weir-7778878d9-hgbcb",
+      "uid": "95980192-0974-4aab-94e2-aafe080c953f",
+      "node": "weir-chart-qualification-worker2",
+      "pod_ip": "10.244.2.18",
+      "container_id": "c4d69cf1d2fc635e16220dd40fe326574c4c99fbfb79d9f97880955177bdd68a",
+      "image_id": "docker.io/library/import-2026-10-11@sha256:7f29cb42d65b2aa0b3d531f3d513aa4895062a592b902a84a5d3b845f42ee95a",
+      "node_process_pid": 28118,
+      "args": [
+        "/weir",
+        "serve",
+        "--config",
+        "/etc/weir/node.yaml",
+        "--routes",
+        "/etc/weir/routes.yaml"
+      ],
+      "user": {
+        "additionalGids": [
+          65532
+        ],
+        "gid": 65532,
+        "uid": 65532
+      },
+      "readonly_root": true,
+      "no_new_privileges": true,
+      "capabilities": {},
+      "seccomp_default_action": "SCMP_ACT_ERRNO",
+      "main_process_children": "",
+      "process_status": [
+        "Name:\tweir",
+        "Uid:\t65532\t65532\t65532\t65532",
+        "Gid:\t65532\t65532\t65532\t65532",
+        "NSpid:\t28118\t1",
+        "CapEff:\t0000000000000000",
+        "NoNewPrivs:\t1",
+        "Seccomp:\t2"
+      ]
+    },
+    {
+      "name": "weir-weir-7778878d9-kxq7g",
+      "uid": "a0b79ac6-648d-4b7a-bbb5-2f67356a168c",
+      "node": "weir-chart-qualification-worker",
+      "pod_ip": "10.244.1.16",
+      "container_id": "de7f161580de2c4239a21878ef67a884892b5b1969ccd8254c434fc8fbac20bc",
+      "image_id": "docker.io/library/import-2026-10-11@sha256:7f29cb42d65b2aa0b3d531f3d513aa4895062a592b902a84a5d3b845f42ee95a",
+      "node_process_pid": 25507,
+      "args": [
+        "/weir",
+        "serve",
+        "--config",
+        "/etc/weir/node.yaml",
+        "--routes",
+        "/etc/weir/routes.yaml"
+      ],
+      "user": {
+        "additionalGids": [
+          65532
+        ],
+        "gid": 65532,
+        "uid": 65532
+      },
+      "readonly_root": true,
+      "no_new_privileges": true,
+      "capabilities": {},
+      "seccomp_default_action": "SCMP_ACT_ERRNO",
+      "main_process_children": "",
+      "process_status": [
+        "Name:\tweir",
+        "Uid:\t65532\t65532\t65532\t65532",
+        "Gid:\t65532\t65532\t65532\t65532",
+        "NSpid:\t25507\t1",
+        "CapEff:\t0000000000000000",
+        "NoNewPrivs:\t1",
+        "Seccomp:\t2"
+      ]
+    },
+    {
+      "name": "weir-weir-7778878d9-rmdcc",
+      "uid": "1b83e192-28ca-4756-aa53-7f1a6cfef167",
+      "node": "weir-chart-qualification-worker2",
+      "pod_ip": "10.244.2.19",
+      "container_id": "d62d260fc4b99cdd383620ea7d18a0a23476f7bbf05bf8da911d865382fa32d6",
+      "image_id": "docker.io/library/import-2026-10-11@sha256:7f29cb42d65b2aa0b3d531f3d513aa4895062a592b902a84a5d3b845f42ee95a",
+      "node_process_pid": 29435,
+      "args": [
+        "/weir",
+        "serve",
+        "--config",
+        "/etc/weir/node.yaml",
+        "--routes",
+        "/etc/weir/routes.yaml"
+      ],
+      "user": {
+        "additionalGids": [
+          65532
+        ],
+        "gid": 65532,
+        "uid": 65532
+      },
+      "readonly_root": true,
+      "no_new_privileges": true,
+      "capabilities": {},
+      "seccomp_default_action": "SCMP_ACT_ERRNO",
+      "main_process_children": "",
+      "process_status": [
+        "Name:\tweir",
+        "Uid:\t65532\t65532\t65532\t65532",
+        "Gid:\t65532\t65532\t65532\t65532",
+        "NSpid:\t29435\t1",
+        "CapEff:\t0000000000000000",
+        "NoNewPrivs:\t1",
+        "Seccomp:\t2"
+      ]
+    }
+  ],
+  "independent_mongo_postflight": {
+    "namespace": "weirtest_5f146816bfaea0075be68c5a",
+    "documents": 64,
+    "expected_revisions": [
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      1,
+      1,
+      0,
+      0,
+      1,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      1,
+      1,
+      0,
+      0,
+      1,
+      1,
+      1,
+      0,
+      1,
+      0,
+      0,
+      1,
+      1,
+      0,
+      1,
+      0,
+      1,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      1,
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0
+    ],
+    "all_fields_exact": true,
+    "revision_bson_type": "int32",
+    "passed": true
+  },
+  "network_checks": {
+    "allowed_and_denied_application_service_and_each_pod": true,
+    "allowed_and_denied_metrics_service": true,
+    "application_client_denied_peer_port": true,
+    "peer_label_allowed_peer_port_and_denied_application_port": true,
+    "headless_dns_contains_all_three_ready_pod_ips": true
+  },
+  "tests": {
+    "strict_helm_lint_variants": 4,
+    "python_tests": 32,
+    "real_binary_config_serve_probe_shutdown_contract": true,
+    "observer_go_race": true,
+    "chart_package_sha256": "e7a90f9e403442b395d8e45743fd665ba9e873670e5435e54e4d9ea01443b7e3"
+  },
+  "failed_attempts": [
+    {
+      "evidence": "scheduling-failure.json",
+      "cause": "spread counted untolerated control-plane; third Pod Pending"
+    },
+    {
+      "evidence": "before-upgrade-commands.json",
+      "cause": "qualified .svc address cannot resolve as an absolute DNS name"
+    },
+    {
+      "evidence": "during-upgrade-business.json",
+      "cause": "rapid replacement invalidated every SDK-cached Pod IP",
+      "first_round_errors": 1098,
+      "first_round_indeterminate": 1096
+    },
+    {
+      "evidence": "persistent-lua.jsonl and protected-termination.json",
+      "cause": "180-second successful traffic ended three seconds before the final old container exit; rerun with 300 seconds"
+    },
+    {
+      "evidence": "debug-networkpolicy.json and mongo-native-service.yaml",
+      "cause": "selectorless-Service egress fixture differed after port translation"
+    },
+    {
+      "evidence": "mongo-kernel-failure.log",
+      "cause": "locked MongoDB8.0.32 Linux startup rejected host kernel7.0.12"
+    }
+  ],
+  "passed": true,
+  "environment": {
+    "cni_pods": [
+      {
+        "name": "kindnet-5rhcf",
+        "uid": "26ad02f5-456a-4144-a9e4-3f4f6f146dd0",
+        "node": "weir-chart-qualification-control-plane",
+        "containers": [
+          {
+            "name": "kindnet-cni",
+            "image": "docker.io/kindest/kindnetd:v20260820-69b56db7",
+            "image_id": "sha256:8e13ccc0aaa682502a49e5f98b88acf75fbf5f724875058b3e7a78b1f38a11e7",
+            "container_id": "containerd://d11c53466bf59e21cb3c336b3126528970fcfcb0904d944faebf5b772094d8b7",
+            "ready": true
+          }
+        ]
+      },
+      {
+        "name": "kindnet-7h9lh",
+        "uid": "888df302-cb50-40ca-9624-fda5b0bef958",
+        "node": "weir-chart-qualification-worker",
+        "containers": [
+          {
+            "name": "kindnet-cni",
+            "image": "docker.io/kindest/kindnetd:v20260820-69b56db7",
+            "image_id": "sha256:8e13ccc0aaa682502a49e5f98b88acf75fbf5f724875058b3e7a78b1f38a11e7",
+            "container_id": "containerd://984b7f4fdac189771d76616829dad376a4266e2dfc13551a27c1a5b5b8df5c64",
+            "ready": true
+          }
+        ]
+      },
+      {
+        "name": "kindnet-nztnx",
+        "uid": "f6e662fb-e859-414d-ba04-732abcbb7d4a",
+        "node": "weir-chart-qualification-worker2",
+        "containers": [
+          {
+            "name": "kindnet-cni",
+            "image": "docker.io/kindest/kindnetd:v20260820-69b56db7",
+            "image_id": "sha256:8e13ccc0aaa682502a49e5f98b88acf75fbf5f724875058b3e7a78b1f38a11e7",
+            "container_id": "containerd://aefa28f200e70b1e18a003f3065a5319c5a4f15d94797a45e3297ba317e35c6a",
+            "ready": true
+          }
+        ]
+      }
+    ],
+    "native_mongo": {
+      "version": "8.0.32",
+      "replica_set": "weir_chart"
+    },
+    "native_mongod_sha256": "440012d251e0ba135f519e4e8b178e5f406d4ce2c98fdbb15766363187ae57c1",
+    "candidate_oci_archive_sha256": "39fa4f59085b66d6e986adb9fd64947ad8bdf05301dd17563f878761441d592d"
+  },
+  "raw_evidence": {
+    "local_path": ".testdata/qualification/2026-10-12/candidate-local-kind/evidence.tar.gz",
+    "sha256": "4f274e913c91f9d7e191d0a0c98299bb631a3ab34a2c222f8092113257550fe6",
+    "files": 102
+  }
+}
