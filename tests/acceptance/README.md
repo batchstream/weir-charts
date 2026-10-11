@@ -1,9 +1,11 @@
 # Persistent acceptance runs
 
 The recorded run examples and SDK soak layout belong to the historical v0.1.x
-qualification. Before using them for Chart 0.3.0, qualify a current SDK/server
+qualification. Before using them for the current Chart, qualify a current SDK/server
 pair and adapt Store targets and result checks to that pair. Chart unit/contract
 tests do not establish a real-cluster or 24-hour acceptance result.
+The [local Kind qualification](../../docs/acceptance-2026-10-12-local-kind.md)
+has separate fixtures and records its functional deployment evidence.
 
 These opt-in fixtures operate only in an explicitly selected, task-owned namespace. They are not chart dependencies. Supply isolated MongoDB replica-set and Elasticsearch indices, a three-replica Weir installation, working metrics-server, diagnostics metrics access, and a 1 GiB persistent results volume. Temporary backend data in the qualification run uses `emptyDir`; it does not qualify backend durability or backups.
 

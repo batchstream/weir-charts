@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: allowed-client
+  namespace: weir-chart-test
+  labels:
+    weir-client: "true"
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: client
+      image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+      imagePullPolicy: IfNotPresent
+      command: [sleep, "3600"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: peer-client
+  namespace: weir-chart-test
+  labels:
+    app.kubernetes.io/name: weir
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: client
+      image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+      imagePullPolicy: IfNotPresent
+      command: [sleep, "3600"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: denied-client
+  namespace: weir-chart-test
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: client
+      image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+      imagePullPolicy: IfNotPresent
+      command: [sleep, "3600"]

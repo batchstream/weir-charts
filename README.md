@@ -79,6 +79,11 @@ Every release exposes an ordinary `<release>-weir` Service for SDK initializatio
 and peer bootstrap, plus `<release>-weir-headless` for direct business discovery.
 Advertise the latter's DNS in `discovery.advertise`: clients resolve it to the
 ready group Pod IPs and send business RPCs directly to the Store owner.
+Use full names such as `weir-weir-headless.application.svc.cluster.local:7447`
+and `weir-weir.application.svc.cluster.local:7448`. Weir treats qualified DNS
+names as absolute; shortened `namespace.svc` names do not use Kubernetes search
+suffixes. Replace `cluster.local` in these examples and the install notes if your
+cluster uses another DNS domain.
 
 For several groups, [examples/shared-seed.yaml](examples/shared-seed.yaml) defines
 an ordinary `weir-seed` Service that selects all Weir groups in the `application`
@@ -101,7 +106,9 @@ no-Store discovery node can use `routes.yaml` containing `stores: []`.
 One replica has replacement downtime. For three replicas layer
 `examples/three-replicas.yaml` onto your reviewed configuration. Its topology label
 selector assumes release `weir`; adjust it for other release names. It requires
-at least two eligible worker hostnames. The optional PDB limits voluntary
+at least two eligible worker hostnames. Its `nodeTaintsPolicy: Honor` excludes
+nodes whose taints the Pods cannot tolerate from the spread calculation.
+The optional PDB limits voluntary
 disruptions, and does not establish physical fault tolerance by itself.
 
 Each default Pod requests and limits 2 CPU / 3 GiB. Observe backend concurrency
@@ -110,8 +117,24 @@ and three new processes while termination completes; reserve up to
 12 CPU / 18 GiB and allow for twice the steady backend connection demand.
 Zero-surge rolling updates do not bound terminating processes or remote work after connection loss.
 
+The Deployment waits `minReadySeconds: 15` after each replacement becomes Ready
+before proceeding. This leaves time for the default SDK's bounded discovery/DNS
+refresh to observe the new Pod addresses while old replicas remain available.
+Keep this window when using direct headless discovery; lowering it can replace
+every cached Pod address before persistent clients refresh. The window does not
+guarantee that every request succeeds during an update; clients still inspect
+all terminal outcomes and reconcile unconfirmed mutations.
+
 SIGTERM withdraws readiness and drains admitted work within the application's
-configured `lifecycle.shutdown_timeout` (default 5 seconds). The Chart grants 15 seconds for termination and kubelet overhead.
+configured `lifecycle.shutdown_timeout` (default 5 seconds). Before SIGTERM,
+kubelet's native `preStop.sleep` action leaves the terminating Weir process
+serving for `preStopDelaySeconds: 15` while its Pod IP leaves ready headless DNS
+and SDK clients refresh. It starts no shell or helper process. The Chart grants
+45 seconds for this delay, application shutdown and kubelet overhead. If you
+raise the application's shutdown timeout, increase the total grace period to
+cover both phases. Kubernetes 1.30+ must have its default
+`PodLifecycleSleepAction` feature enabled; setting `preStopDelaySeconds: 0`
+removes the hook and its retirement protection.
 Probes execute `/weir probe ready|live --address 127.0.0.1:7449`. Readiness describes
 lifecycle; qualify real Read/Mutate/Scan/Native operations independently. A sent
 mutation without a terminal reply has an unknown outcome and requires explicit
@@ -164,3 +187,5 @@ checks and qualifying the intended immutable image. Real install/upgrade/rollbac
 backend, discovery and sustained-load evidence belong in a new acceptance report.
 The [persistent acceptance fixtures](tests/acceptance/README.md) retain historical
 v0.1.x context and require adaptation for a current SDK/server pair.
+The [local Kind qualification](docs/acceptance-2026-10-12-local-kind.md) records
+the current functional deployment checks and their limits.

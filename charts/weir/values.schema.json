@@ -15,7 +15,9 @@
     "nameOverride",
     "fullnameOverride",
     "replicaCount",
+    "minReadySeconds",
     "terminationGracePeriodSeconds",
+    "preStopDelaySeconds",
     "image",
     "config",
     "service",
@@ -84,10 +86,20 @@
       "minimum": 1,
       "maximum": 100
     },
+    "minReadySeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 179
+    },
     "terminationGracePeriodSeconds": {
       "type": "integer",
       "minimum": 10,
       "maximum": 300
+    },
+    "preStopDelaySeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 290
     },
     "image": {
       "type": "object",

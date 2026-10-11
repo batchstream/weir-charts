@@ -7,6 +7,7 @@ metadata:
     {{- include "weir.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  minReadySeconds: {{ .Values.minReadySeconds }}
   revisionHistoryLimit: 3
   progressDeadlineSeconds: 180
   strategy:
@@ -75,6 +76,12 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if gt (int .Values.preStopDelaySeconds) 0 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.preStopDelaySeconds }}
+          {{- end }}
           startupProbe:
             exec:
               command: ["/weir", "probe", "ready", "--address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
