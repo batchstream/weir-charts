@@ -1,79 +1,46 @@
 replicaCount: 3
-peer:
-  enabled: true
-config:
-  existingSecret: ""
-  data:
-    node:
-      listeners:
-        application: 0.0.0.0:7447
-        peer: 0.0.0.0:7448
-      diagnostics:
-        address: 0.0.0.0:7449
-        allow_intranet: true
-      discovery:
-        group: local-chart-mongo
-        peer_address_env: WEIR_PEER_ADDRESS
-        seeds: [weir-weir.weir-chart-test.svc.cluster.local:7448]
-        advertise: [weir-weir-headless.weir-chart-test.svc.cluster.local:7447]
-    routes:
-      stores:
-        - name: mongo
-          backend:
-            mongodb:
-              uri: mongodb://192.168.65.254:27029/?directConnection=true&serverMonitoringMode=poll
 resources:
   requests:
     cpu: 100m
     memory: 128Mi
   limits:
-    cpu: "1"
+    cpu: '1'
     memory: 512Mi
 podDisruptionBudget:
   enabled: true
   maxUnavailable: 1
 topologySpreadConstraints:
-  - maxSkew: 1
-    minDomains: 2
-    topologyKey: kubernetes.io/hostname
-    nodeTaintsPolicy: Honor
-    whenUnsatisfiable: DoNotSchedule
-    labelSelector:
-      matchLabels:
-        app.kubernetes.io/name: weir
-        app.kubernetes.io/instance: weir
+- maxSkew: 1
+  minDomains: 2
+  topologyKey: kubernetes.io/hostname
+  nodeTaintsPolicy: Honor
+  whenUnsatisfiable: DoNotSchedule
+  labelSelector:
+    matchLabels:
+      app.kubernetes.io/name: weir
+      app.kubernetes.io/instance: weir
 metrics:
   enabled: true
   ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              weir-client: "true"
-      ports:
-        - {protocol: TCP, port: 7449}
+  - from:
+    - podSelector:
+        matchLabels:
+          weir-client: 'true'
+    ports:
+    - protocol: TCP
+      port: 7449
 networkPolicy:
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              weir-client: "true"
-      ports:
-        - {protocol: TCP, port: 7447}
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: weir
-      ports:
-        - {protocol: TCP, port: 7448}
   egress:
-    - to:
-        - ipBlock:
-            cidr: 192.168.65.254/32
-      ports:
-        - {protocol: TCP, port: 27029}
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: weir
-      ports:
-        - {protocol: TCP, port: 7448}
+  - to:
+    - ipBlock:
+        cidr: 192.168.65.254/32
+    ports:
+    - protocol: TCP
+      port: 27029
+mesh:
+  name: local-chart
+stores:
+- name: mongo
+  backend:
+    mongodb:
+      uri: mongodb://192.168.65.254:27029/?directConnection=true&serverMonitoringMode=poll

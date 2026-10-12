@@ -18,10 +18,3 @@ spec:
       targetPort: grpc
       protocol: TCP
       appProtocol: kubernetes.io/h2c
-    {{- if .Values.peer.enabled }}
-    - name: peer
-      port: {{ .Values.peer.port }}
-      targetPort: peer
-      protocol: TCP
-      appProtocol: kubernetes.io/h2c
-    {{- end }}

@@ -1,0 +1,22 @@
+{{- if .Values.autoscaling.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "weir.fullname" . }}
+  labels:
+    {{- include "weir.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "weir.fullname" . }}
+  pollingInterval: {{ .Values.autoscaling.pollingInterval }}
+  cooldownPeriod: {{ .Values.autoscaling.cooldownPeriod }}
+  minReplicaCount: {{ .Values.autoscaling.minReplicaCount }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicaCount }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          {{- toYaml .Values.autoscaling.scaleDown | nindent 10 }}
+  triggers:
+    {{- toYaml .Values.autoscaling.triggers | nindent 4 }}
+{{- end }}

@@ -1,5 +1,4 @@
 {{- include "weir.validate" . -}}
-{{- if .Values.config.data }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,7 +7,9 @@ metadata:
     {{- include "weir.labels" . | nindent 4 }}
 data:
   node.yaml: |
-    {{- .Values.config.data.node | toYaml | nindent 4 }}
+    {{- include "weir.node" . | nindent 4 }}
+  {{- if not .Values.storesSecret }}
   routes.yaml: |
-    {{- .Values.config.data.routes | toYaml | nindent 4 }}
-{{- end }}
+    stores:
+      {{- .Values.stores | toYaml | nindent 6 }}
+  {{- end }}

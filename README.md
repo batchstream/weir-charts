@@ -1,171 +1,93 @@
 # Weir Helm charts
 
-Deploy [Weir](https://github.com/batchstream/weir), a synchronous MongoDB
-and Search data plane, on Kubernetes. Helm 3.17+ and Kubernetes 1.30+ are required.
-Chart 0.6.0 targets Weir v0.2.0 and the source contract recorded in Chart.yaml's
-`weir.batchstream.io/source-revision` annotation. Older configuration using manual memory, concurrency and business timeout
-fields must be updated for this contract.
+Deploy [Weir](https://github.com/batchstream/weir), a synchronous MongoDB and Search data plane, on Kubernetes. Helm 3.17+ and Kubernetes 1.30+ are required. Chart 0.7.0 uses the published Weir v0.2.0 immutable image and source contract recorded in `Chart.yaml`.
 
-Each release runs one replica group, with one Weir process per Pod and Lua inside
-that process. Backends, collections, indices, backups and storage are provisioned
-separately. Application and peer traffic use plaintext HTTP/2 inside a trusted,
-isolated network. Historical cluster evidence is retained in
-[docs/acceptance.md](docs/acceptance.md); it does not qualify this new Chart version.
+One Helm release is one Store owner group. Every replica owns the same Store definitions; a group can host several Stores. Different releases join a Weir Mesh through peer directory synchronization, and each group can be released and scaled independently. Each Pod runs one Weir process with Lua inside that process. Backends, collections, indices, credentials and backups are provisioned separately.
 
-## Install
+## Store groups
 
-The default image digest pins the published Weir v0.2.0 index verified against
-the recorded source contract. Each Pod records that full source revision in a
-Chart-managed annotation. To supply another compatible image, record its
-immutable `image.digest` in your reviewed values. Empty or mutable image
-references are rejected. Template tests use a
-clearly marked dummy digest in `tests/values.yaml`; that fixture is unsuitable
-for installation.
+Declare this group's Stores directly in `stores`:
 
-Provision an external Secret with **both** `node.yaml` and `routes.yaml`, and set
-`config.existingSecret` to its name. `node.yaml` uses the upstream basic YAML
-schema; `routes.yaml` contains `stores` with `backend.mongodb` or `backend.search` connection settings.
-The deployment starts:
-
-```sh
-/weir serve --config /etc/weir/node.yaml --routes /etc/weir/routes.yaml
+```yaml
+mesh:
+  name: application
+stores:
+  - name: primary
+    backend:
+      mongodb:
+        uri: mongodb://mongo:27017/?directConnection=true
+  - name: search
+    backend:
+      search:
+        url: http://search:9200
 ```
 
-The application listener must bind `0.0.0.0:<service.port>`, and diagnostics must
-bind `127.0.0.1:<diagnostics.port>`. Weir detects the visible container, host and
-process memory limits automatically; there is no process `memory` configuration.
-Set Kubernetes resource limits for the actual Pod capacity. Each Store exposes
-`queue.max_operations` and `queue.max_bytes` for waiting work, plus
-`batching.max_operations` and `batching.max_bytes` for physical batches. Dispatch returns
-queue capacity immediately. Business execution follows the client context without
-a Weir concurrency or connection cap. For peer synchronization, enable `peer.enabled`, bind `0.0.0.0:<peer.port>` and select
-`discovery.peer_address_env: WEIR_PEER_ADDRESS`. The Pod supplies this variable
-through its public Pod IP and peer port, with brackets that work for IPv4 and IPv6.
-The examples use IPv4 wildcard listeners; for an IPv6 Pod network, bind application
-and peer listeners to `[::]:<port>` instead. All replicas of a release must share the
-same `discovery.group`, Store definitions and business advertisement.
+Database, collection and index targets come from request URIs; Chart configuration declares the backend connection for each Store. Every Store name belongs to one owner group in a Mesh. Overlapping names in different groups produce a discovery conflict, rather than selecting a backend arbitrarily. Multiple replicas within a group use identical Stores and settings.
 
-Backend database/collection/index targets come from request URIs, rather than
-Chart routing configuration. MongoDB and Search use `backend.authentication.username_file`
-and `backend.authentication.password_file`. MongoDB requires explicit SCRAM-SHA-256, authSource and TLS in
-the MongoDB URI. Mount their externally managed Secret read-only at the
-referenced paths. Both adapters can use an explicitly mounted `backend.tls.ca_file`; otherwise
-they use system trust. Process `lua` and `transport.max_pending_records` apply to
-every Store; Store `scan` settings control retained fetch/publication batches. [examples/existing-secret.yaml](examples/existing-secret.yaml)
-shows external config, auth and CA mounts.
-
-For non-secret configuration, set `config.existingSecret: ""` and provide
-`config.data.node` and `config.data.routes`. Helm writes the same two YAML files
-into a ConfigMap. Inline backend credentials are rejected in this mode because
-Helm retains values in release history. Validate supplied config using the
-compatible binary's `weir check --config node.yaml --routes routes.yaml` before
-installation; checking credential-file fields reads those explicitly supplied
-files and requires their authorization. The Chart never reads an existing Secret.
+Install [examples/mongo.yaml](examples/mongo.yaml) and [examples/search.yaml](examples/search.yaml) as separate groups in the same namespace:
 
 ```sh
-helm upgrade --install weir ./charts/weir \
-  --namespace application --kube-context your-context \
-  -f your-reviewed-values.yaml --atomic --wait --timeout 5m
+helm upgrade --install mongo ./charts/weir --namespace application \
+  --kube-context your-context -f examples/mongo.yaml --atomic --wait --timeout 5m
+helm upgrade --install search ./charts/weir --namespace application \
+  --kube-context your-context -f examples/search.yaml --atomic --wait --timeout 5m
 ```
 
-Configure precise network ingress and egress destinations. The default permits
-same-namespace Pods labeled `weir-client: "true"` to call port 7447, and DNS egress
-to kube-system/kube-dns. Backend and peer egress require explicit rules. The CNI
-must enforce NetworkPolicy; verify allowed and denied clients before promotion.
-Additive allow-all policies can defeat those restrictions. Update policy ports
-when changing listener ports.
+The Chart generates `node.yaml`, listener ports, diagnostics access and discovery. Group identity is `namespace/release`, so it remains stable when `fullnameOverride` changes. The advertised business endpoint is the group's `<release>-weir-headless.<namespace>.svc.<clusterDomain>:<service.port>`. The SDK resolves its Ready Pod addresses and balances business RPCs within that group; a Kubernetes ClusterIP alone does not rebalance an established gRPC connection. Set `clusterDomain` if the cluster differs from `cluster.local`. Generated `[::]` listeners accept IPv4 and IPv6 on the supported Go runtime; Pod peer advertisements use bracketed Pod IPs.
 
-## Store discovery
+Each enabled group creates its own `<release>-weir-mesh` ordinary ClusterIP Service. It selects all enabled Pods with the same explicit `mesh.name` label in its namespace, exposing application initialization and peer bootstrap ports. Every group uses its own seed Service to discover the shared Mesh. Service names remain release-owned, so no shared Helm object needs an owner flag. Ordinary `<release>-weir` and headless business Services select only their release.
 
-Every release exposes an ordinary `<release>-weir` Service for SDK initialization
-and peer bootstrap, plus `<release>-weir-headless` for direct business discovery.
-Advertise the latter's DNS in `discovery.advertise`: clients resolve it to the
-ready group Pod IPs and send business RPCs directly to the Store owner.
-Use full names such as `weir-weir-headless.application.svc.cluster.local:7447`
-and `weir-weir.application.svc.cluster.local:7448`. Weir treats qualified DNS
-names as absolute; shortened `namespace.svc` names do not use Kubernetes search
-suffixes. Replace `cluster.local` in these examples and the install notes if your
-cluster uses another DNS domain.
+`mesh.enabled` defaults to true and `mesh.name` defaults to `weir`. Use different names to isolate Mesh membership. A Pod with `mesh.enabled: false` has no membership label or peer listener and cannot enter another group's Mesh seed Service. Additional `mesh.seeds` are appended to the generated seed; they are explicit peer endpoints, limited to 15 additional entries. Cross-namespace Mesh synchronization requires explicit ingress and egress rules on both sides. A Mesh name is a same-namespace bootstrap/network selector, not a protocol-level authentication boundary; a deliberately configured external seed can connect directories across that boundary.
 
-For several groups, [examples/shared-seed.yaml](examples/shared-seed.yaml) defines
-an ordinary `weir-seed` Service that selects all Weir groups in the `application`
-namespace. Its application port is the SDK initialization endpoint; its peer port
-is the common bootstrap seed. It intentionally uses the common Chart name label
-without a release-instance label. Adjust it if changing `nameOverride` or ports.
-[examples/mongo.yaml](examples/mongo.yaml) assumes release `weir`, and
-[examples/search.yaml](examples/search.yaml) assumes release `search`; both point
-to this shared seed but advertise their own group headless DNS. Allow selected
-Weir peer ingress/egress across groups, as those examples show. A Store name must
-belong to exactly one group; conflicting ownership is a discovery error.
+SDK initialization may use any Mesh seed Service's application endpoint. Discovery then selects the owner group's business endpoints; peer traffic synchronizes directory information and does not proxy business requests through other groups. Allow SDK clients to reach each owner group's application port.
 
-For a single group, point `discovery.seeds` to its ordinary release Service instead
-of provisioning the shared seed. For a standalone node, omit peer synchronization
-while retaining a reachable business advertisement for its local Stores. A
-no-Store discovery node can use `routes.yaml` containing `stores: []`.
+## Process and credentials
 
-## Operations
+`nodeConfig` accepts only process settings: `lua`, `lifecycle`, `transport`, `overload` and optional `diagnostics.timeout`. The Chart owns `listeners`, `discovery`, `diagnostics.address` and `diagnostics.allow_intranet`; attempts to override them fail before installation. Application, diagnostics and enabled peer ports must be distinct. Weir detects process/container memory limits automatically; set Kubernetes resource limits for actual Pod capacity.
 
-One replica has replacement downtime. For three replicas layer
-`examples/three-replicas.yaml` onto your reviewed configuration. Its topology label
-selector assumes release `weir`; adjust it for other release names. It requires
-at least two eligible worker hostnames. Its `nodeTaintsPolicy: Honor` excludes
-nodes whose taints the Pods cannot tolerate from the spread calculation.
-The optional PDB limits voluntary
-disruptions, and does not establish physical fault tolerance by itself.
+Store `queue.max_operations/max_bytes` bound waiting work, and `batching.max_operations/max_bytes` bound physical batches. Dispatch releases queue capacity. Business execution follows the caller context without a fixed Weir concurrency cap. Process Lua and transport settings apply to every Store in this group; Store scan settings bound retained fetch/publication batches.
 
-Each default Pod requests and limits 2 CPU / 3 GiB. Observe backend concurrency
-and connection demand on every starting, running and terminating Pod. A revision can have three old
-and three new processes while termination completes; reserve up to
-12 CPU / 18 GiB and allow for twice the steady backend connection demand.
-Zero-surge rolling updates do not bound terminating processes or remote work after connection loss.
+Helm retains values in release history. Inline backend credentials and URI userinfo are rejected. MongoDB and Search use `backend.authentication.username_file/password_file`; mount an externally managed Secret read-only using `extraVolumes/extraVolumeMounts`. MongoDB requires SCRAM-SHA-256, authSource and TLS in the URI when authenticating. Both adapters can use `backend.tls.ca_file`, or system trust when it is absent.
 
-The Deployment waits `minReadySeconds: 15` after each replacement becomes Ready
-before proceeding. This leaves time for the default SDK's bounded discovery/DNS
-refresh to observe the new Pod addresses while old replicas remain available.
-Keep this window when using direct headless discovery; lowering it can replace
-every cached Pod address before persistent clients refresh. The window does not
-guarantee that every request succeeds during an update; clients still inspect
-all terminal outcomes and reconcile unconfirmed mutations.
+Alternatively, set `storesSecret` to an externally provisioned Secret containing **only `routes.yaml`**, with the upstream `stores` list. It is mutually exclusive with a non-empty inline `stores`. `node.yaml` always comes from the Chart's ConfigMap. The projected `/etc/weir` mount combines the generated node and selected routes read-only; the Chart never reads or renders the existing Secret. See [examples/existing-secret.yaml](examples/existing-secret.yaml). Version the Secret or change `storesRevision` to roll Pods after a coordinated update; CA/auth file changes require the same restart.
 
-SIGTERM withdraws readiness and drains admitted work within the application's
-configured `lifecycle.shutdown_timeout` (default 5 seconds). Before SIGTERM,
-kubelet's native `preStop.sleep` action leaves the terminating Weir process
-serving for `preStopDelaySeconds: 15` while its Pod IP leaves ready headless DNS
-and SDK clients refresh. It starts no shell or helper process. The Chart grants
-45 seconds for this delay, application shutdown and kubelet overhead. If you
-raise the application's shutdown timeout, increase the total grace period to
-cover both phases. Kubernetes 1.30+ must have its default
-`PodLifecycleSleepAction` feature enabled; setting `preStopDelaySeconds: 0`
-removes the hook and its retirement protection.
-Probes execute `/weir probe ready|live --address 127.0.0.1:7449`. Readiness describes
-lifecycle; qualify real Read/Mutate/Scan/Native operations independently. A sent
-mutation without a terminal reply has an unknown outcome and requires explicit
-reconciliation before retrying.
+Validate the generated `node.yaml` and selected `routes.yaml` with the compatible `weir check --config ... --routes ...` command before deployment. Credential-file validation reads those supplied files and requires their authorization. ConfigMap updates automatically change the Pod checksum.
 
-Configuration is static. Version external Secrets and change
-`config.existingSecret`, or update `config.revision` after an approved Secret
-change. ConfigMap changes automatically roll Pods via a checksum covering both
-files. CA/auth file changes need the same controlled restart. Verify old processes
-have exited before beginning another revision. Roll back only to a reviewed,
-compatible image/config pair. Weir needs no application PVC.
+## Prometheus and KEDA
 
-```sh
-kubectl --context your-context -n application rollout status deployment/weir-weir
-kubectl --context your-context -n application get endpointslice \
-  -l kubernetes.io/service-name=weir-weir-headless
-```
+Enable `metrics.enabled` and authorize scraper sources in `metrics.ingress`. The Chart opens the diagnostics listener for metrics and creates a separate metrics Service. With default NetworkPolicy, metrics enablement requires explicit scraper rules. Annotations can support an existing scraper; `metrics.serviceMonitor.enabled` creates a ServiceMonitor when Prometheus Operator is already installed. Its selector matches exactly this release's metrics Service, and Prometheus discovers each Pod endpoint separately. `metrics.serviceMonitor.labels` must match your Prometheus instance's monitor selector; Chart identity/component labels cannot be overridden.
 
-For Prometheus, enable `metrics.enabled`, authorize scraper sources and port 7449
-in `metrics.ingress`, and configure `diagnostics.address: 0.0.0.0:7449` plus
-`diagnostics.allow_intranet: true`. For IPv6 scraper access use `[::]:7449`
-instead. ConfigMap mode checks that listener contract;
-external Secret mode requires the same pre-install validation. The separate
-`<release>-weir-metrics` Service exposes diagnostics `/metrics` and fixed health
-handlers. `metrics.annotations` can select an existing scraper.
+ServiceMonitor target relabeling supplies `namespace`, `weir_group="namespace/release"` and `weir_mesh`. Native Weir metrics also carry `store` where applicable. With a custom scraper, supply the same stable labels and avoid duplicate scrape jobs. Scrape all group replicas; querying only the ordinary metrics ClusterIP would sample one Pod.
+
+Overlay [examples/prometheus-autoscaling.yaml](examples/prometheus-autoscaling.yaml) on the `mongo` release in namespace `application`. Adjust the namespace, release identity, Prometheus endpoint and scraper labels for your deployment. Its query aggregates this exact group's pending operations and active executions into one value; `AverageValue` lets HPA divide that total across replicas. The threshold is a workload target per replica, not a built-in execution limit; choose it from measured backend and application capacity.
+
+The example explicitly sets `ignoreNullValues: "false"` and a 10-second HTTP timeout. Query failures or missing observations remain errors; no `or vector(0)` hides a lost scrape target. Configure an existing `TriggerAuthentication`/`ClusterTriggerAuthentication` through `authenticationRef` if needed. No controller credentials are rendered or read by this Chart. KEDA's operator, metrics server and relevant network rules must already allow its Prometheus query. See [the Prometheus scaler contract](https://keda.sh/docs/2.20/scalers/prometheus/) and [ScaledObject specification](https://keda.sh/docs/2.20/reference/scaledobject-spec/).
+
+`autoscaling.triggers` accepts native KEDA triggers, including Prometheus and other supported scalers. Prometheus triggers require metrics to be enabled; CRDs/controllers are external prerequisites. `pollingInterval`, `cooldownPeriod` and `scaleDown` configure polling and HPA scale-down behavior. The cooldown setting concerns KEDA activation/scale-to-zero; ordinary reduction between running replica counts is controlled by HPA behavior. Minimum replicas must stay at least one: direct SDK connections and peer discovery cannot wake a group with zero owners. A PDB requires at least two minimum replicas. When autoscaling is enabled, the Deployment omits `replicas` so future Helm upgrades do not reset the controller's scale. Verify the ScaledObject becomes Ready and HPA reaches its minimum before admitting production traffic; Helm readiness alone does not establish controller readiness. Disabling KEDA resumes the configured `replicaCount`.
+
+## Network and operations
+
+Application and peer traffic use plaintext HTTP/2 inside a trusted, isolated network. Default NetworkPolicy permits same-namespace clients labeled `weir-client: "true"` to call application port 7447, plus DNS egress. Adjust client policy ports if changing `service.port`. The Chart adds same-Mesh peer ingress/egress automatically using the destination's named `peer` port, so groups can use different peer port numbers. Backend egress and additional seed destinations remain explicit. Verify the CNI enforces both allowed and denied traffic; additive allow-all policies can bypass restrictions.
+
+One replica has replacement downtime. For three replicas use [examples/three-replicas.yaml](examples/three-replicas.yaml); update its release-specific spread selector. Its `nodeTaintsPolicy: Honor` excludes untolerated nodes from the spread calculation. The optional PDB limits voluntary disruptions and does not establish physical fault tolerance by itself.
+
+Per-process limits are 16 Stores and the Mesh directory is bounded to 128 nodes. The current SDK accepts 64 physical endpoint addresses per Store, including dual-stack answers and rolling overlap. This Chart conservatively caps fixed/max replicas at 31: 31 dual-stack Pods plus one retiring replacement use 64 addresses. Keep zero-surge updates and ensure each terminating Pod has exited before replacements accumulate; slow or repeated termination can exceed that assumption. Sum groups and temporary old/new incarnations within the 128-node Mesh limit. These are independent discovery bounds, not storage throughput guarantees.
+
+Each default Pod requests and limits 2 CPU / 3 GiB. Budget starting, running and terminating processes and backend connection demand together. Kubernetes does not impose a hard bound on concurrent terminating Pods; zero-surge rollout does not eliminate old remote work after connection loss. Large workloads need measured admission/latency and backend capacity verification.
+
+The Deployment waits `minReadySeconds: 15` after each replacement becomes Ready. This leaves time for SDK discovery/DNS refresh while old replicas remain. Before SIGTERM, kubelet's `preStop.sleep: 15` lets terminating Pod addresses leave Ready headless DNS without another shell/worker process. Weir then withdraws readiness and drains admitted work within `nodeConfig.lifecycle.shutdown_timeout` (default five seconds). The default 45-second grace covers both phases and kubelet overhead; raise it when increasing shutdown timeout. The native sleep hook requires Kubernetes 1.30+'s default PodLifecycleSleepAction feature. Disabling the hook removes its retirement protection.
+
+Probes execute `/weir probe ready|live` against loopback diagnostics. Readiness describes lifecycle; validate real business operations separately. A sent mutation without a terminal response has an unknown outcome and requires reconciliation before retrying.
+
+Changes to Store ownership, Store membership or backend identity require a coordinated cutover. An ordinary rolling update temporarily runs old and new definitions in one group and does not provide a transactional migration. Stop or redirect affected clients, drain the old ownership, apply the reviewed configuration/image pair and verify discovery and actual data operations before resuming. Compatible process/image updates still require upgrade/rollback qualification.
+
+## Migration from Chart 0.6
+
+Chart 0.7 intentionally replaces `config` and `peer`; the schema rejects those old keys even when supplied alongside new fields. Move `config.data.routes.stores` to top-level `stores`. Move permitted process settings from `config.data.node` to `nodeConfig`, removing manual listeners/discovery/metrics addresses. Replace `peer.enabled` with `mesh.enabled` and choose an explicit Mesh name when sharing a namespace.
+
+For an old complete configuration Secret, provision a routes-only Secret and reference it through `storesSecret`; node.yaml is no longer consumed from external Secrets. Replace `config.revision` with `storesRevision`. Group identity changes from manually supplied discovery.group to namespace/release, so coordinate migration of the existing directory/clients rather than mixing old and new owner groups. The old separately applied shared seed Service is no longer required; remove it only after verifying nothing still uses it. This migration changes Chart configuration, not the Weir protocol or SDK API.
 
 ## Develop and release
-
-Build the recorded Weir source commit as an explicit validator; then run:
 
 ```sh
 python3 -m venv .venv
@@ -174,23 +96,6 @@ make test PYTHON=.venv/bin/python WEIR_BIN=/absolute/path/to/weir
 make package PYTHON=.venv/bin/python WEIR_BIN=/absolute/path/to/weir
 ```
 
-Strict lint and template tests use the template-only image fixture. The contract
-check invokes the selected binary against actual Helm-rendered MongoDB/Search
-configuration, three-replica overlays, generated credential-file fixtures and an
-invalid legacy config. It then starts a no-Store node, executes the rendered
-startup/readiness/liveness probes and verifies bounded SIGTERM shutdown. It makes
-no backend connections and reads no existing Secrets. CI builds the fixed source
-revision before running the same checks; it packages the Chart as an artifact.
+CI builds the pinned Weir source contract before validating rendered configurations. Tests cover generated Store groups, Mesh selectors/policies, Secret projection, metrics/KEDA objects, source identity, authentication fixtures and an isolated no-Store serve/probe/shutdown check. That contract test opens no backend connections and reads no existing Secrets. Real Mesh discovery, CNI enforcement, per-Pod Prometheus collection and KEDA scaling require isolated cluster qualification.
 
-A reviewed `weir-0.6.0` tag can publish the immutable OCI Chart and GitHub archive
-with SHA256SUMS after release preflight. Updating the server contract requires
-updating the Chart source annotation and CI source pin together, rerunning these
-checks and qualifying the intended immutable image. Real install/upgrade/rollback,
-backend, discovery and sustained-load evidence belong in a new acceptance report.
-The [persistent acceptance fixtures](tests/acceptance/README.md) retain historical
-v0.1.x context and require adaptation for a current SDK/server pair.
-The [local Kind qualification](docs/acceptance-2026-10-12-local-kind.md) records
-the functional deployment fixes and their limits. The
-[final published-image qualification](docs/acceptance-2026-10-12-release.md)
-records the Weir v0.2.0 / public SDK v0.10.1 persistent upgrade/rollback checks.
-Public OCI Chart installation is qualified separately after Chart publication.
+A reviewed `weir-0.7.0` tag publishes the immutable OCI Chart and GitHub archive with SHA256SUMS after preflight. Source annotation, image digest and CI source pins remain Weir v0.2.0. Historical [acceptance fixtures](tests/acceptance/README.md) and [v0.2.0 release evidence](docs/acceptance-2026-10-12-release.md) describe their recorded versions; they do not qualify the new Chart's Mesh/monitor/autoscaling behavior or continuous 24-hour production acceptance.

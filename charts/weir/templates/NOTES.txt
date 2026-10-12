@@ -1,13 +1,21 @@
-Weir SDK initialization endpoint: {{ include "weir.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+Store group: {{ include "weir.group" . }}
+SDK initialization endpoint: {{ include "weir.address" (dict "root" . "name" (include "weir.fullname" .)) }}:{{ .Values.service.port }}
+Business discovery advertises only this group's Ready Pods:
+{{ include "weir.address" (dict "root" . "name" (include "weir.headlessName" .)) }}:{{ .Values.service.port }}
+{{- if .Values.mesh.enabled }}
+Mesh: {{ .Values.mesh.name }} (namespace {{ .Release.Namespace }})
+SDK Mesh entry: {{ include "weir.address" (dict "root" . "name" (include "weir.meshName" .)) }}:{{ .Values.service.port }}
+Peer bootstrap: {{ include "weir.address" (dict "root" . "name" (include "weir.meshName" .)) }}:{{ .Values.mesh.port }}
+Mesh bootstrap uses each destination Pod's named ports; backend egress remains explicit.
+{{- end }}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+ServiceMonitor requires an installed Prometheus Operator and a Prometheus selector accepting its labels.
+{{- end }}
+{{- if .Values.autoscaling.enabled }}
+ScaledObject requires an installed KEDA controller and CRDs. Verify its Prometheus query returns one value.
+{{- end }}
 
-Advertise the group headless business endpoint in discovery.advertise:
-{{ printf "%s-headless" (include "weir.fullname" . | trunc 54 | trimSuffix "-") }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
-
-Replace cluster.local above and in discovery seeds/advertisement if your cluster uses another DNS domain.
-Weir resolves qualified DNS names as absolute; shortened namespace.svc names do not work.
-
-Validate the immutable image/config pair with the compatible Weir check command.
-Application traffic is plaintext and requires a trusted, isolated network.
-Verify the cluster CNI enforces NetworkPolicy and allow the necessary backend destinations.
-Readiness means the serving lifecycle is ready; verify actual SDK operations before promotion.
-A missing mutation response is UNKNOWN: never retry an uncertain mutation automatically.
+Validate this immutable image with the generated node.yaml and selected routes.yaml.
+Application and peer traffic require a trusted, isolated network; verify CNI enforcement.
+A missing mutation response is UNKNOWN: reconcile before retrying.
+Store ownership or backend changes require a coordinated migration, not an ordinary rolling update.

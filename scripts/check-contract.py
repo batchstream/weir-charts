@@ -61,11 +61,8 @@ def check_runtime(binary, directory):
     diagnostics = reserve_port()
     app_port = application.getsockname()[1]
     diagnostic_port = diagnostics.getsockname()[1]
-    node = {"listeners": {"application": "0.0.0.0:" + str(app_port)},
-            "diagnostics": {"address": "127.0.0.1:" + str(diagnostic_port)}}
-    data = {"node": node, "routes": {"stores": []}}
-    values = {"config": {"existingSecret": "", "data": data},
-              "service": {"port": app_port}, "diagnostics": {"port": diagnostic_port}}
+    values = {"mesh": {"enabled": False}, "service": {"port": app_port},
+              "diagnostics": {"port": diagnostic_port}}
     resources = render(values)
     container, args, environment = validate_config(binary, resources, directory)
     application.close()
@@ -116,37 +113,38 @@ def main():
         for release, values in fixtures:
             resources = render(values, release)
             validate_config(binary, resources, directory)
-            ipv6 = copy.deepcopy(values)
-            for name in ("application", "peer"):
-                ipv6["config"]["data"]["node"]["listeners"][name] = ipv6["config"]["data"]["node"]["listeners"][name].replace("0.0.0.0", "[::]")
-            validate_config(binary, render(ipv6, release), directory, "fd00::123")
+            # Generated wildcard listeners and advertised Pod addresses support both families.
+            validate_config(binary, resources, directory, "fd00::123")
+            custom = copy.deepcopy(values)
+            custom.update(fullnameOverride="custom", clusterDomain="cluster.internal")
+            validate_config(binary, render(custom, release), directory)
             replicas = copy.deepcopy(values)
             replicas.update(yaml.safe_load((ROOT / "examples/three-replicas.yaml").read_text()))
             validate_config(binary, render(replicas, release), directory)
         # Exercise relative credential-file resolution using only generated fixtures.
         files = copy.deepcopy(fixtures[0][1])
-        backend = files["config"]["data"]["routes"]["stores"][0]["backend"]
+        backend = files["stores"][0]["backend"]
         backend["mongodb"].update(uri="mongodb://mongo:27017/?directConnection=true&authMechanism=SCRAM-SHA-256&authSource=admin&tls=true")
         backend["authentication"] = {"username_file":"test-user.txt", "password_file":"test-password.txt"}
         (directory / "test-user.txt").write_text("test-user\n")
         (directory / "test-password.txt").write_text("test-password\n")
         validate_config(binary, render(files), directory)
         files = copy.deepcopy(fixtures[1][1])
-        backend = files["config"]["data"]["routes"]["stores"][0]["backend"]
+        backend = files["stores"][0]["backend"]
         backend["search"]["url"] = "https://search:9200"
         backend["authentication"] = {"username_file": "test-user.txt", "password_file": "test-password.txt"}
         validate_config(binary, render(files, "search"), directory)
         # A real binary must reject old fields that a permissive Helm object could accept.
         old = copy.deepcopy(fixtures[0][1])
-        old["config"]["data"]["node"]["memory"] = "1GiB"
+        old["nodeConfig"] = {"transport": {"max_pending_records": -1}}
         try:
             validate_config(binary, render(old), directory)
         except subprocess.CalledProcessError:
             pass
         else:
-            raise RuntimeError("removed memory configuration unexpectedly accepted")
+            raise RuntimeError("invalid process configuration unexpectedly accepted")
         check_runtime(binary, directory)
-    print("Rendered MongoDB/Search config, credential-file fixtures, serve/probes and shutdown passed")
+    print("Generated MongoDB/Search group config, IPv4/IPv6 Pod addresses, custom DNS, credential fixtures and serve/probes/shutdown passed")
 
 
 if __name__ == "__main__":

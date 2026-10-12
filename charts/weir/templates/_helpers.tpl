@@ -4,9 +4,27 @@
 {{- define "weir.fullname" -}}
 {{- default (printf "%s-%s" .Release.Name (include "weir.name" .)) .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
+{{- define "weir.headlessName" -}}
+{{ printf "%s-headless" (include "weir.fullname" . | trunc 54 | trimSuffix "-") }}
+{{- end -}}
+{{- define "weir.meshName" -}}
+{{ printf "%s-mesh" (include "weir.fullname" . | trunc 58 | trimSuffix "-") }}
+{{- end -}}
+{{- define "weir.metricsName" -}}
+{{ printf "%s-metrics" (include "weir.fullname" . | trunc 55 | trimSuffix "-") }}
+{{- end -}}
+{{- define "weir.group" -}}
+{{ printf "%s/%s" .Release.Namespace .Release.Name }}
+{{- end -}}
+{{- define "weir.address" -}}
+{{ printf "%s.%s.svc.%s" .name .root.Release.Namespace .root.Values.clusterDomain }}
+{{- end -}}
 {{- define "weir.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "weir.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+{{- define "weir.meshLabels" -}}
+weir.batchstream.io/mesh: {{ .Values.mesh.name | quote }}
 {{- end -}}
 {{- define "weir.labels" -}}
 {{ include "weir.selectorLabels" . }}
@@ -17,21 +35,52 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "weir.image" -}}
 {{ printf "%s@%s" .Values.image.repository (required "image.digest must identify a compatible immutable Weir image" .Values.image.digest) }}
 {{- end -}}
+{{- define "weir.node" -}}
+{{- $node := deepCopy .Values.nodeConfig -}}
+{{- $listeners := dict "application" (printf "[::]:%v" .Values.service.port) -}}
+{{- $diagnostics := default dict $node.diagnostics -}}
+{{- $_ := set $diagnostics "address" (printf "127.0.0.1:%v" .Values.diagnostics.port) -}}
+{{- if .Values.metrics.enabled -}}
+{{- $_ := set $diagnostics "address" (printf "[::]:%v" .Values.diagnostics.port) -}}
+{{- $_ := set $diagnostics "allow_intranet" true -}}
+{{- end -}}
+{{- $advertise := printf "%s:%v" (include "weir.address" (dict "root" . "name" (include "weir.headlessName" .))) .Values.service.port -}}
+{{- $discovery := dict "group" (include "weir.group" .) "advertise" (list $advertise) -}}
+{{- if .Values.mesh.enabled -}}
+{{- $_ := set $listeners "peer" (printf "[::]:%v" .Values.mesh.port) -}}
+{{- $_ := set $discovery "peer_address_env" "WEIR_PEER_ADDRESS" -}}
+{{- $seed := printf "%s:%v" (include "weir.address" (dict "root" . "name" (include "weir.meshName" .))) .Values.mesh.port -}}
+{{- $_ := set $discovery "seeds" (concat (list $seed) .Values.mesh.seeds) -}}
+{{- end -}}
+{{- $_ := set $node "listeners" $listeners -}}
+{{- $_ := set $node "diagnostics" $diagnostics -}}
+{{- $_ := set $node "discovery" $discovery -}}
+{{- $node | toYaml -}}
+{{- end -}}
 {{- define "weir.validate" -}}
-{{- if hasKey .Values.podAnnotations "weir.batchstream.io/source-revision" -}}
-{{- fail "weir.batchstream.io/source-revision is managed by the Chart and cannot be overridden in podAnnotations" -}}
+{{- range $key := list "checksum/config" "weir.batchstream.io/source-revision" "weir.batchstream.io/stores-revision" -}}
+{{- if hasKey $.Values.podAnnotations $key -}}
+{{- fail (printf "%s is managed by the Chart and cannot be overridden in podAnnotations" $key) -}}
+{{- end -}}
 {{- end -}}
 {{- if lt (int .Values.terminationGracePeriodSeconds) (add (int .Values.preStopDelaySeconds) 10) -}}
 {{- fail "terminationGracePeriodSeconds must allow preStopDelaySeconds plus at least 10 seconds for Weir shutdown" -}}
 {{- end -}}
-{{- if and .Values.config.existingSecret .Values.config.data -}}
-{{- fail "config.existingSecret and config.data are mutually exclusive" -}}
+{{- if or (eq (int .Values.service.port) (int .Values.diagnostics.port)) (and .Values.mesh.enabled (or (eq (int .Values.mesh.port) (int .Values.service.port)) (eq (int .Values.mesh.port) (int .Values.diagnostics.port)))) -}}
+{{- fail "service.port, diagnostics.port and enabled mesh.port must be distinct" -}}
 {{- end -}}
-{{- if and (not .Values.config.existingSecret) (not .Values.config.data) -}}
-{{- fail "set config.existingSecret or non-secret config.data with node and routes" -}}
+{{- range $key := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" "app.kubernetes.io/version" "app.kubernetes.io/managed-by" "helm.sh/chart" -}}
+{{- if hasKey $.Values.metrics.serviceMonitor.labels $key -}}
+{{- fail (printf "metrics.serviceMonitor.labels cannot override managed label %s" $key) -}}
 {{- end -}}
-{{- if .Values.config.data -}}
-{{- range .Values.config.data.routes.stores -}}
+{{- end -}}
+{{- if and .Values.storesSecret (not (empty .Values.stores)) -}}
+{{- fail "storesSecret and non-empty stores are mutually exclusive" -}}
+{{- end -}}
+{{- $names := dict -}}
+{{- range .Values.stores -}}
+{{- if hasKey $names .name -}}{{- fail "stores names must be unique within the group" -}}{{- end -}}
+{{- $_ := set $names .name true -}}
 {{- $backend := default dict .backend -}}
 {{- $mongodb := default dict $backend.mongodb -}}
 {{- if or (hasKey $mongodb "username") (hasKey $mongodb "password") (hasKey $mongodb "username_file") (hasKey $mongodb "password_file") -}}
@@ -43,44 +92,35 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- $authentication := default dict $backend.authentication -}}
 {{- if or $authentication.username $authentication.password -}}
-{{- fail "config.data cannot contain backend credentials; use username_file/password_file and external Secret mounts" -}}
+{{- fail "stores cannot contain backend credentials; use username_file/password_file and external Secret mounts" -}}
+{{- end -}}
+{{- if or (regexMatch "^[^:]+://[^/?#]*@" (default "" $mongodb.uri)) (regexMatch "^[^:]+://[^/?#]*@" (default "" $search.url)) -}}
+{{- fail "backend URI userinfo is unsupported; use credential-file authentication" -}}
 {{- end -}}
 {{- end -}}
-{{- $node := .Values.config.data.node -}}
-{{- $listeners := default dict $node.listeners -}}
-{{- if not (or (eq (default "" $listeners.application) (printf "0.0.0.0:%v" .Values.service.port)) (eq (default "" $listeners.application) (printf "[::]:%v" .Values.service.port))) -}}
-{{- fail "config.data.node.listeners.application must bind a wildcard IP:<service.port>" -}}
-{{- end -}}
-{{- if .Values.peer.enabled -}}
-{{- if not (or (eq (default "" $listeners.peer) (printf "0.0.0.0:%v" .Values.peer.port)) (eq (default "" $listeners.peer) (printf "[::]:%v" .Values.peer.port))) -}}
-{{- fail "config.data.node.listeners.peer must bind a wildcard IP:<peer.port> when peer is enabled" -}}
-{{- end -}}
-{{- if ne (default "" (default dict $node.discovery).peer_address_env) "WEIR_PEER_ADDRESS" -}}
-{{- fail "config.data.node.discovery.peer_address_env must be WEIR_PEER_ADDRESS" -}}
-{{- end -}}
-{{- else if (default "" $listeners.peer) -}}
-{{- fail "config.data.node.listeners.peer requires peer.enabled" -}}
-{{- end -}}
-{{- $diagnostics := default dict $node.diagnostics -}}
-{{- $expected := printf "127.0.0.1:%v" .Values.diagnostics.port -}}
-{{- if .Values.metrics.enabled -}}
-{{- $expected = printf "0.0.0.0:%v" .Values.diagnostics.port -}}
-{{- if not $diagnostics.allow_intranet -}}
-{{- fail "metrics requires config.data.node.diagnostics.allow_intranet=true" -}}
-{{- end -}}
-{{- end -}}
-{{- $matches := eq (default "" $diagnostics.address) $expected -}}
-{{- if .Values.metrics.enabled -}}
-{{- $matches = or $matches (eq (default "" $diagnostics.address) (printf "[::]:%v" .Values.diagnostics.port)) -}}
-{{- end -}}
-{{- if not $matches -}}
-{{- fail "config.data.node.diagnostics.address must match the loopback probe or enabled metrics listener" -}}
-{{- end -}}
+{{- if and (not .Values.mesh.enabled) (not (empty .Values.mesh.seeds)) -}}
+{{- fail "mesh.seeds requires mesh.enabled" -}}
 {{- end -}}
 {{- if and .Values.metrics.enabled (empty .Values.metrics.ingress) .Values.networkPolicy.enabled -}}
 {{- fail "metrics.enabled requires explicit metrics.ingress sources when NetworkPolicy is enabled" -}}
 {{- end -}}
-{{- if and .Values.podDisruptionBudget.enabled (lt (int .Values.replicaCount) 2) -}}
-{{- fail "podDisruptionBudget requires at least two replicas" -}}
+{{- if and .Values.metrics.serviceMonitor.enabled (not .Values.metrics.enabled) -}}
+{{- fail "metrics.serviceMonitor.enabled requires metrics.enabled" -}}
+{{- end -}}
+{{- $minimum := int .Values.replicaCount -}}
+{{- if .Values.autoscaling.enabled -}}
+{{- $minimum = int .Values.autoscaling.minReplicaCount -}}
+{{- if gt $minimum (int .Values.autoscaling.maxReplicaCount) -}}
+{{- fail "autoscaling.minReplicaCount must not exceed maxReplicaCount" -}}
+{{- end -}}
+{{- if empty .Values.autoscaling.triggers -}}{{- fail "autoscaling.enabled requires triggers" -}}{{- end -}}
+{{- range .Values.autoscaling.triggers -}}
+{{- if and (eq .type "prometheus") (not $.Values.metrics.enabled) -}}
+{{- fail "Prometheus autoscaling requires metrics.enabled" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.podDisruptionBudget.enabled (lt $minimum 2) -}}
+{{- fail "podDisruptionBudget requires at least two minimum replicas" -}}
 {{- end -}}
 {{- end -}}

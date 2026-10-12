@@ -6,7 +6,9 @@ metadata:
   labels:
     {{- include "weir.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
   minReadySeconds: {{ .Values.minReadySeconds }}
   revisionHistoryLimit: 3
   progressDeadlineSeconds: 180
@@ -23,9 +25,12 @@ spec:
     metadata:
       labels:
         {{- include "weir.selectorLabels" . | nindent 8 }}
+        {{- if .Values.mesh.enabled }}
+        {{- include "weir.meshLabels" . | nindent 8 }}
+        {{- end }}
       annotations:
-        checksum/config: {{ .Values.config.data | toJson | sha256sum }}
-        weir.batchstream.io/config-revision: {{ .Values.config.revision | quote }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        weir.batchstream.io/stores-revision: {{ .Values.storesRevision | quote }}
         weir.batchstream.io/source-revision: {{ index .Chart.Annotations "weir.batchstream.io/source-revision" | quote }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -58,22 +63,22 @@ spec:
           ports:
             - name: grpc
               containerPort: {{ .Values.service.port }}
-            {{- if .Values.peer.enabled }}
+            {{- if .Values.mesh.enabled }}
             - name: peer
-              containerPort: {{ .Values.peer.port }}
+              containerPort: {{ .Values.mesh.port }}
             {{- end }}
             {{- if .Values.metrics.enabled }}
             - name: metrics
               containerPort: {{ .Values.diagnostics.port }}
             {{- end }}
-          {{- if .Values.peer.enabled }}
+          {{- if .Values.mesh.enabled }}
           env:
             - name: POD_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
             - name: WEIR_PEER_ADDRESS
-              value: "[$(POD_IP)]:{{ .Values.peer.port }}"
+              value: "[$(POD_IP)]:{{ .Values.mesh.port }}"
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -110,15 +115,25 @@ spec:
             {{- end }}
       volumes:
         - name: config
-          {{- if .Values.config.existingSecret }}
-          secret:
-            secretName: {{ .Values.config.existingSecret }}
+          projected:
             defaultMode: 0440
-          {{- else }}
-          configMap:
-            name: {{ include "weir.fullname" . }}
-            defaultMode: 0440
-          {{- end }}
+            sources:
+              - configMap:
+                  name: {{ include "weir.fullname" . }}
+                  items:
+                    - key: node.yaml
+                      path: node.yaml
+                    {{- if not .Values.storesSecret }}
+                    - key: routes.yaml
+                      path: routes.yaml
+                    {{- end }}
+              {{- if .Values.storesSecret }}
+              - secret:
+                  name: {{ .Values.storesSecret }}
+                  items:
+                    - key: routes.yaml
+                      path: routes.yaml
+              {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

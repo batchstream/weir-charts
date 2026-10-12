@@ -1,36 +1,55 @@
+# One release is one Store owner group. Replicas share the same configuration.
 replicaCount: 1
-# Allow the default SDK discovery/DNS refresh to observe each replacement.
 minReadySeconds: 15
 nameOverride: ""
 fullnameOverride: ""
+clusterDomain: cluster.local
 image:
   repository: ghcr.io/batchstream/weir
-  # Published Weir v0.2.0, verified against the supported source revision.
   digest: sha256:ea12776d93739a9decb5464df51b13219fa34e4ccb10c8a8b2fd8d3f95fe5fbf
   pullPolicy: IfNotPresent
 imagePullSecrets: []
-# Provision this Secret separately; never put backend credentials in Helm values.
-config:
-  existingSecret: weir-config
-  # Secret must contain node.yaml and routes.yaml.
-  # Non-secret {node: <basic config>, routes: <Store config>} only.
-  # Set existingSecret to "" when using data.
-  data: null
-  # Change this when updating an existing Secret to trigger a controlled restart.
-  revision: ""
+# This group owns at most 16 Stores. Backends and credentials are provisioned separately.
+stores: []
+# An external Secret may supply routes.yaml instead of a non-empty stores list.
+storesSecret: ""
+storesRevision: ""
+# Process settings only; listeners, discovery and metrics access are Chart-managed.
+nodeConfig: {}
 service:
   port: 7447
   annotations: {}
-peer:
-  enabled: false
+mesh:
+  enabled: true
+  name: weir
   port: 7448
+  # Additional peer endpoints; cross-namespace access needs explicit network rules.
+  seeds: []
 diagnostics:
   port: 7449
-# Requires diagnostics.address: 0.0.0.0:7449 and diagnostics.allow_intranet: true.
 metrics:
   enabled: false
   annotations: {}
   ingress: []
+  serviceMonitor:
+    enabled: false
+    labels: {}
+    interval: 15s
+    scrapeTimeout: 10s
+autoscaling:
+  enabled: false
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  pollingInterval: 30
+  cooldownPeriod: 300
+  # Native KEDA triggers. Controllers, CRDs and authentication refs are external.
+  triggers: []
+  scaleDown:
+    stabilizationWindowSeconds: 300
+    policies:
+      - type: Pods
+        value: 1
+        periodSeconds: 60
 resources:
   requests:
     cpu: "2"
@@ -38,10 +57,8 @@ resources:
   limits:
     cpu: "2"
     memory: 3Gi
-# Kubelet sleeps while terminating Pod addresses leave SDK discovery, then sends SIGTERM.
 preStopDelaySeconds: 15
 terminationGracePeriodSeconds: 45
-# No surge: still budget terminating Pods alongside replacements.
 strategy:
   type: RollingUpdate
   rollingUpdate:
@@ -52,7 +69,6 @@ podDisruptionBudget:
   maxUnavailable: 1
 networkPolicy:
   enabled: true
-  # Only labeled clients in the release namespace can reach application gRPC.
   ingress:
     - from:
         - podSelector:
@@ -61,7 +77,7 @@ networkPolicy:
       ports:
         - protocol: TCP
           port: 7447
-  # Add precise backend/peer destinations here. DNS is allowed separately.
+  # Add precise backend destinations and any extra peer endpoints here.
   egress: []
   dns:
     namespaceSelector:
@@ -75,6 +91,5 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 topologySpreadConstraints: []
-# Read-only CA/config mounts only; Weir does not need persistent application storage.
 extraVolumes: []
 extraVolumeMounts: []

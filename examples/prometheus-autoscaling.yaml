@@ -1,0 +1,44 @@
+# Overlay examples/mongo.yaml; release mongo, namespace application.
+# Install Prometheus Operator and KEDA separately, then supply their existing endpoints.
+metrics:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - {protocol: TCP, port: 7449}
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: monitoring
+    interval: 15s
+    scrapeTimeout: 10s
+autoscaling:
+  enabled: true
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pollingInterval: 30
+  cooldownPeriod: 300
+  triggers:
+    - type: prometheus
+      metricType: AverageValue
+      metadata:
+        serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+        # A single group-wide value: HPA AverageValue divides it across replicas.
+        query: >-
+          sum(weir_store_pending_entries{namespace="application",weir_group="application/mongo"})
+          + sum(weir_store_active_executions{namespace="application",weir_group="application/mongo"})
+        threshold: "32"
+        ignoreNullValues: "false"
+        # Bound the HTTP request; a failed or empty query must remain an error.
+        timeout: "10000"
+      # Reference an existing TriggerAuthentication if Prometheus requires authentication.
+      # authenticationRef:
+      #   name: prometheus-auth
+podDisruptionBudget:
+  enabled: true
