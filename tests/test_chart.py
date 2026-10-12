@@ -201,6 +201,14 @@ class ChartTests(unittest.TestCase):
         other = {"autoscaling": {"enabled": True, "triggers": [cron]}}
         self.assertEqual(render(other)["ScaledObject"]["spec"]["triggers"][0], cron)
 
+    def test_promtool_regression_uses_the_actual_autoscaling_example_query(self):
+        example = yaml.safe_load((ROOT / "examples/prometheus-autoscaling.yaml").read_text())
+        query = example["autoscaling"]["triggers"][0]["metadata"]["query"]
+        fixture = yaml.safe_load((ROOT / "tests/prometheus/autoscaling-query.test.yaml").read_text())
+        for scenario in fixture["tests"]:
+            for expression in scenario["promql_expr_test"]:
+                self.assertEqual(expression["expr"], query)
+
     def test_inline_auth_userinfo_and_writable_mounts_are_rejected(self):
         for adapter, endpoint in (("mongodb", {"uri": "mongodb://mongo:27017"}), ("search", {"url": "https://search:9200"})):
             backend = {adapter: endpoint, "authentication": {"username": "test-user", "password": "test-password"}}
