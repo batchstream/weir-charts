@@ -19,14 +19,19 @@
     "terminationGracePeriodSeconds",
     "preStopDelaySeconds",
     "image",
-    "config",
     "service",
-    "peer",
     "diagnostics",
     "podDisruptionBudget",
     "strategy",
     "networkPolicy",
-    "metrics"
+    "metrics",
+    "stores",
+    "storesSecret",
+    "storesRevision",
+    "clusterDomain",
+    "nodeConfig",
+    "mesh",
+    "autoscaling"
   ],
   "properties": {
     "resources": {
@@ -84,7 +89,7 @@
     "replicaCount": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 100
+      "maximum": 31
     },
     "minReadySeconds": {
       "type": "integer",
@@ -127,41 +132,6 @@
         }
       }
     },
-    "config": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "existingSecret",
-        "revision"
-      ],
-      "properties": {
-        "existingSecret": {
-          "type": "string"
-        },
-        "revision": {
-          "type": "string"
-        },
-        "data": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "additionalProperties": false,
-          "required": [
-            "node",
-            "routes"
-          ],
-          "properties": {
-            "node": {
-              "type": "object"
-            },
-            "routes": {
-              "type": "object"
-            }
-          }
-        }
-      }
-    },
     "service": {
       "type": "object",
       "additionalProperties": false,
@@ -177,24 +147,6 @@
         },
         "annotations": {
           "type": "object"
-        }
-      }
-    },
-    "peer": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "port"
-      ],
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "port": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
         }
       }
     },
@@ -277,7 +229,8 @@
       "required": [
         "enabled",
         "annotations",
-        "ingress"
+        "ingress",
+        "serviceMonitor"
       ],
       "properties": {
         "enabled": {
@@ -288,6 +241,288 @@
         },
         "ingress": {
           "type": "array"
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "labels",
+            "interval",
+            "scrapeTimeout"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "interval": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ms|s|m|h)$"
+            },
+            "scrapeTimeout": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ms|s|m|h)$"
+            }
+          }
+        }
+      }
+    },
+    "stores": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "backend"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,62}$"
+          },
+          "backend": {
+            "type": "object",
+            "minProperties": 1
+          },
+          "queue": {
+            "type": "object"
+          },
+          "batching": {
+            "type": "object"
+          },
+          "scan": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "storesSecret": {
+      "type": "string"
+    },
+    "storesRevision": {
+      "type": "string"
+    },
+    "clusterDomain": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+    },
+    "nodeConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "lua": {
+          "type": "object"
+        },
+        "lifecycle": {
+          "type": "object"
+        },
+        "transport": {
+          "type": "object"
+        },
+        "overload": {
+          "type": "object"
+        },
+        "diagnostics": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "timeout": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "mesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "name",
+        "port",
+        "seeds"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "seeds": {
+          "type": "array",
+          "maxItems": 15,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "minReplicaCount",
+        "maxReplicaCount",
+        "pollingInterval",
+        "cooldownPeriod",
+        "triggers",
+        "scaleDown"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minReplicaCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31
+        },
+        "maxReplicaCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31
+        },
+        "pollingInterval": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cooldownPeriod": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "metadata"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "metricType": {
+                "enum": [
+                  "AverageValue",
+                  "Value",
+                  "Utilization"
+                ]
+              },
+              "useCachedMetrics": {
+                "type": "boolean"
+              },
+              "metadata": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "authenticationRef": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "kind": {
+                    "enum": [
+                      "TriggerAuthentication",
+                      "ClusterTriggerAuthentication"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "scaleDown": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stabilizationWindowSeconds",
+            "policies"
+          ],
+          "properties": {
+            "stabilizationWindowSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3600
+            },
+            "selectPolicy": {
+              "enum": [
+                "Max",
+                "Min",
+                "Disabled"
+              ]
+            },
+            "policies": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "value",
+                  "periodSeconds"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "Pods",
+                      "Percent"
+                    ]
+                  },
+                  "value": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "periodSeconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1800
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }
