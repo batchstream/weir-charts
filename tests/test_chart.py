@@ -201,6 +201,42 @@ class ChartTests(unittest.TestCase):
         other = {"autoscaling": {"enabled": True, "triggers": [cron]}}
         self.assertEqual(render(other)["ScaledObject"]["spec"]["triggers"][0], cron)
 
+    def test_large_store_and_discovery_sets_and_replica_counts(self):
+        stores = [{"name": "store" + str(index), "backend": {"mongodb": {"uri": "mongodb://127.0.0.1:27017"}}}
+                  for index in range(32)]
+        stores[0]["name"] = "store" + "x" * 256
+        seeds = ["peer" + str(index) + ".example:7448" for index in range(32)]
+        values = {"stores": stores, "mesh": {"seeds": seeds}, "replicaCount": 128}
+        resources = render(values)
+        routes = yaml.safe_load(resources["ConfigMap"]["data"]["routes.yaml"])
+        node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
+        self.assertEqual(routes["stores"], stores)
+        self.assertEqual(node["discovery"]["seeds"][1:], seeds)
+        self.assertEqual(resources["Deployment"]["spec"]["replicas"], 128)
+        trigger = {"type": "cron", "metadata": {"timezone": "UTC", "start": "0 8 * * *",
+                                                  "end": "0 18 * * *", "desiredReplicas": "64"}}
+        scaling = {"autoscaling": {"enabled": True, "minReplicaCount": 64,
+                                    "maxReplicaCount": 128, "triggers": [trigger]}}
+        scaled = render(scaling)["ScaledObject"]["spec"]
+        self.assertEqual(scaled["minReplicaCount"], 64)
+        self.assertEqual(scaled["maxReplicaCount"], 128)
+
+    def test_extended_lifecycle_timers_follow_native_progress_relation(self):
+        values = {"minReadySeconds": 200, "terminationGracePeriodSeconds": 600,
+                  "preStopDelaySeconds": 400}
+        resources = render(values)
+        deployment = resources["Deployment"]["spec"]
+        pod = deployment["template"]["spec"]
+        self.assertEqual(deployment["minReadySeconds"], 200)
+        self.assertEqual(deployment["progressDeadlineSeconds"], 201)
+        self.assertEqual(pod["terminationGracePeriodSeconds"], 600)
+        self.assertEqual(pod["containers"][0]["lifecycle"]["preStop"]["sleep"]["seconds"], 400)
+        # Both Kubernetes Deployment timing fields are int32 and the progress
+        # deadline must strictly exceed minReadySeconds.
+        values["minReadySeconds"] = 2147483646
+        self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 2147483647)
+        self.assertEqual(render()["Deployment"]["spec"]["progressDeadlineSeconds"], 180)
+
     def test_promtool_regression_uses_the_actual_autoscaling_example_query(self):
         example = yaml.safe_load((ROOT / "examples/prometheus-autoscaling.yaml").read_text())
         query = example["autoscaling"]["triggers"][0]["metadata"]["query"]
@@ -289,8 +325,8 @@ class ChartTests(unittest.TestCase):
         cases = [
             {"metrics": {"enabled": True}}, {"metrics": {"serviceMonitor": {"enabled": True}}},
             {"metrics": {"serviceMonitor": {"labels": {"app.kubernetes.io/instance": "other"}}}},
-            {"replicaCount": 0}, {"replicaCount": 32}, {"unknownSetting": True},
-            {"minReadySeconds": -1}, {"minReadySeconds": 180}, {"terminationGracePeriodSeconds": 20},
+            {"replicaCount": 0}, {"unknownSetting": True},
+            {"minReadySeconds": -1}, {"minReadySeconds": 2147483647}, {"terminationGracePeriodSeconds": 20},
             {"preStopDelaySeconds": -1}, {"image": {"digest": "sha256:bad"}}, {"image": {"digest": ""}},
             {"podAnnotations": {"weir.batchstream.io/source-revision": "unverified"}},
             {"config": {"existingSecret": "old"}}, {"peer": {"enabled": True}},
@@ -298,9 +334,8 @@ class ChartTests(unittest.TestCase):
             {"nodeConfig": {"diagnostics": {"address": "127.0.0.1:1234"}}},
             {"nodeConfig": {"diagnostics": {"allow_intranet": True}}},
             {"mesh": {"name": "INVALID"}}, {"mesh": {"enabled": False, "seeds": ["other:7448"]}},
-            {"stores": [store, store]}, {"stores": [store] * 17}, {"stores": [store], "storesSecret": "external"},
+            {"stores": [store, store]}, {"stores": [store], "storesSecret": "external"},
             {"autoscaling": {"enabled": True}}, {"autoscaling": {"minReplicaCount": 0}},
-            {"autoscaling": {"maxReplicaCount": 32}},
             {"autoscaling": {"enabled": True, "minReplicaCount": 3, "maxReplicaCount": 2, "triggers": [trigger]}},
             {"podDisruptionBudget": {"enabled": True}},
             {"podDisruptionBudget": {"enabled": True}, "autoscaling": {"enabled": True, "minReplicaCount": 1, "triggers": [trigger]}},

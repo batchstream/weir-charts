@@ -88,23 +88,20 @@
     },
     "replicaCount": {
       "type": "integer",
-      "minimum": 1,
-      "maximum": 31
+      "minimum": 1
     },
     "minReadySeconds": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 179
+      "maximum": 2147483646
     },
     "terminationGracePeriodSeconds": {
       "type": "integer",
-      "minimum": 10,
-      "maximum": 300
+      "minimum": 10
     },
     "preStopDelaySeconds": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 290
+      "minimum": 0
     },
     "image": {
       "type": "object",
@@ -275,7 +272,6 @@
     },
     "stores": {
       "type": "array",
-      "maxItems": 16,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -287,8 +283,7 @@
           "name": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 63,
-            "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,62}$"
+            "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9])*$"
           },
           "backend": {
             "type": "object",
@@ -372,7 +367,6 @@
         },
         "seeds": {
           "type": "array",
-          "maxItems": 15,
           "uniqueItems": true,
           "items": {
             "type": "string",
@@ -399,13 +393,11 @@
         },
         "minReplicaCount": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 31
+          "minimum": 1
         },
         "maxReplicaCount": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 31
+          "minimum": 1
         },
         "pollingInterval": {
           "type": "integer",

@@ -11,7 +11,7 @@ spec:
   {{- end }}
   minReadySeconds: {{ .Values.minReadySeconds }}
   revisionHistoryLimit: 3
-  progressDeadlineSeconds: 180
+  progressDeadlineSeconds: {{ max 180 (add (int .Values.minReadySeconds) 1) }}
   strategy:
     type: {{ .Values.strategy.type }}
     {{- if eq .Values.strategy.type "RollingUpdate" }}
