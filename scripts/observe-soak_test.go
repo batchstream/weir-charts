@@ -60,7 +60,7 @@ func samplingObserver(t *testing.T, fixture *samplingFixture) observer {
 	fixture.Baseline.Pods[0].Metadata.Labels = map[string]string{"app.kubernetes.io/instance": "weir"}
 	fixture.Baseline.Pods[1].Metadata.Labels = map[string]string{"app": "mongo"}
 	fixture.Baseline.Pods[2].Metadata.Labels = map[string]string{"app": "elasticsearch"}
-	fixture.Baseline.LoadPods[0].Metadata.Labels = map[string]string{"job-name": "load"}
+	fixture.Baseline.LoadPods[0].Metadata.Labels = map[string]string{"batch.kubernetes.io/job-name": "load"}
 	server := httptest.NewServer(fixture)
 	t.Cleanup(server.Close)
 	token := filepath.Join(t.TempDir(), "task-token")

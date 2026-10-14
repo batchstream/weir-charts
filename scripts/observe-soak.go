@@ -143,7 +143,7 @@ func (o *observer) sample(ctx context.Context) (record, error) {
 	}
 	for _, item := range pods.Items {
 		labels := item.Metadata.Labels
-		if labels["job-name"] == o.Settings.Job || labels["batch.kubernetes.io/job-name"] == o.Settings.Job {
+		if labels["batch.kubernetes.io/job-name"] == o.Settings.Job {
 			result.LoadPods = append(result.LoadPods, item)
 		}
 		weir := labels["app.kubernetes.io/instance"] == o.Settings.Release
