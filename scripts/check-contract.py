@@ -49,6 +49,33 @@ def validate_config(binary, resources, directory, pod_ip="127.0.0.1"):
     return container, args, environment
 
 
+def check_large_configuration(binary, directory):
+    # This only invokes `check`: no seed resolution, backend I/O or replicas.
+    stores = []
+    for index in range(32):
+        name = "store" + str(index)
+        if index == 0:
+            name = "store" + "x" * 251
+        backend = {"mongodb": {"uri": "mongodb://127.0.0.1:27017/?directConnection=true"}}
+        if index % 2:
+            backend = {"search": {"url": "http://127.0.0.1:9200"}}
+        store = {"name": name, "backend": backend}
+        stores.append(store)
+    seeds = ["peer" + str(index) + ".example:7448" for index in range(32)]
+    values = {"stores": stores, "mesh": {"seeds": seeds}, "replicaCount": 128,
+              "minReadySeconds": 200, "terminationGracePeriodSeconds": 600,
+              "preStopDelaySeconds": 400}
+    resources = render(values)
+    validate_config(binary, resources, directory)
+    validate_config(binary, resources, directory, "fd00::123")
+    trigger = {"type": "cron", "metadata": {"timezone": "UTC", "start": "0 8 * * *",
+                                             "end": "0 18 * * *", "desiredReplicas": "128"}}
+    autoscaling = {"enabled": True, "minReplicaCount": 64, "maxReplicaCount": 128,
+                   "triggers": [trigger]}
+    values["autoscaling"] = autoscaling
+    validate_config(binary, render(values), directory)
+
+
 def reserve_port():
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
@@ -143,8 +170,9 @@ def main():
             pass
         else:
             raise RuntimeError("invalid process configuration unexpectedly accepted")
+        check_large_configuration(binary, directory)
         check_runtime(binary, directory)
-    print("Generated MongoDB/Search group config, IPv4/IPv6 Pod addresses, custom DNS, credential fixtures and serve/probes/shutdown passed")
+    print("Generated MongoDB/Search config, 32 Stores, 256-character Store name, 33 total seeds, 128 replica manifests, extended lifecycle timers, IPv4/IPv6, credential fixtures and serve/probes/shutdown passed")
 
 
 if __name__ == "__main__":

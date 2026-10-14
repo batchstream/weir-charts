@@ -6,10 +6,10 @@ fullnameOverride: ""
 clusterDomain: cluster.local
 image:
   repository: ghcr.io/batchstream/weir
-  digest: sha256:ea12776d93739a9decb5464df51b13219fa34e4ccb10c8a8b2fd8d3f95fe5fbf
+  digest: sha256:2779ffd51f6aa21ae92e40d4de82e8f7311cdb947b40e47dd25cf6838a3a33ed
   pullPolicy: IfNotPresent
 imagePullSecrets: []
-# This group owns at most 16 Stores. Backends and credentials are provisioned separately.
+# This group owns the listed Stores. Backends and credentials are provisioned separately.
 stores: []
 # An external Secret may supply routes.yaml instead of a non-empty stores list.
 storesSecret: ""
