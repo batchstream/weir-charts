@@ -50,7 +50,6 @@ def validate_config(binary, resources, directory, pod_ip="127.0.0.1"):
 
 
 def check_large_configuration(binary, directory):
-    # This only invokes `check`: no seed resolution, backend I/O or replicas.
     stores = []
     for index in range(32):
         name = "store" + str(index)
@@ -63,7 +62,7 @@ def check_large_configuration(binary, directory):
         stores.append(store)
     seeds = ["peer" + str(index) + ".example:7448" for index in range(32)]
     values = {"stores": stores, "mesh": {"seeds": seeds}, "replicaCount": 128,
-              "minReadySeconds": 200, "terminationGracePeriodSeconds": 600,
+              "minReadySeconds": 200, "progressDeadlineSeconds": 600, "terminationGracePeriodSeconds": 600,
               "preStopDelaySeconds": 400}
     resources = render(values)
     validate_config(binary, resources, directory)
@@ -140,7 +139,6 @@ def main():
         for release, values in fixtures:
             resources = render(values, release)
             validate_config(binary, resources, directory)
-            # Generated wildcard listeners and advertised Pod addresses support both families.
             validate_config(binary, resources, directory, "fd00::123")
             custom = copy.deepcopy(values)
             custom.update(fullnameOverride="custom", clusterDomain="cluster.internal")

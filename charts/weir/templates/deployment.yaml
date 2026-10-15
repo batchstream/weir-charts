@@ -3,10 +3,13 @@
 {{- $probeMilliseconds := int .Values.probeTimeoutMilliseconds -}}
 {{- $probeTimeout := printf "%dms" $probeMilliseconds -}}
 {{- $probeSeconds := add (div (add $probeMilliseconds 999) 1000) 1 -}}
-{{- $startupFailures := add (div (add $startup 1) 2) 1 -}}
-{{- $progress := max 180 (add (int .Values.minReadySeconds) (mul $startupFailures (max 2 $probeSeconds)) 1) -}}
-{{- if gt $progress 2147483647 -}}
-{{- fail "minReadySeconds plus the derived startup probe budget must fit the Kubernetes int32 progress deadline" -}}
+{{- $nativeProbePeriod := 10 -}}
+{{- $startupFailures := add (div (add $startup (sub $nativeProbePeriod 1)) $nativeProbePeriod) 1 -}}
+{{- $startupBudget := mul $startupFailures (max $nativeProbePeriod $probeSeconds) -}}
+{{- $minimumProgress := add (int .Values.minReadySeconds) $startupBudget -}}
+{{- $progress := int .Values.progressDeadlineSeconds -}}
+{{- if le $progress $minimumProgress -}}
+{{- fail (printf "progressDeadlineSeconds must exceed minReadySeconds plus the derived startup probe budget (%d seconds)" $minimumProgress) -}}
 {{- end -}}
 {{- $shutdown := int .Values.lifecycle.shutdownTimeoutSeconds -}}
 {{- $cleanup := int .Values.lifecycle.cleanupTimeoutSeconds -}}
@@ -26,7 +29,6 @@ spec:
   replicas: {{ .Values.replicaCount }}
   {{- end }}
   minReadySeconds: {{ .Values.minReadySeconds }}
-  revisionHistoryLimit: 3
   progressDeadlineSeconds: {{ $progress }}
   strategy:
     type: {{ .Values.strategy.type }}
@@ -108,20 +110,15 @@ spec:
             exec:
               command: ["/weir", "probe", "ready", "--timeout", {{ $probeTimeout | quote }}, "--address", "127.0.0.1:{{ .Values.diagnosticsPort }}"]
             timeoutSeconds: {{ $probeSeconds }}
-            periodSeconds: 2
             failureThreshold: {{ $startupFailures }}
           readinessProbe:
             exec:
               command: ["/weir", "probe", "ready", "--timeout", {{ $probeTimeout | quote }}, "--address", "127.0.0.1:{{ .Values.diagnosticsPort }}"]
             timeoutSeconds: {{ $probeSeconds }}
-            periodSeconds: 2
-            failureThreshold: 1
           livenessProbe:
             exec:
               command: ["/weir", "probe", "live", "--timeout", {{ $probeTimeout | quote }}, "--address", "127.0.0.1:{{ .Values.diagnosticsPort }}"]
             timeoutSeconds: {{ $probeSeconds }}
-            periodSeconds: 5
-            failureThreshold: 3
           volumeMounts:
             - name: config
               mountPath: /etc/weir

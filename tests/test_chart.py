@@ -52,6 +52,10 @@ class ChartTests(unittest.TestCase):
             command = container[name]["exec"]["command"]
             self.assertEqual(command[:2], ["/weir", "probe"])
             self.assertEqual(command[-1], "127.0.0.1:7449")
+            self.assertNotIn("periodSeconds", container[name])
+        self.assertNotIn("failureThreshold", container["readinessProbe"])
+        self.assertNotIn("failureThreshold", container["livenessProbe"])
+        self.assertNotIn("revisionHistoryLimit", resources["Deployment"]["spec"])
         self.assertIn("@sha256:", container["image"])
         node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
         self.assertEqual(node["discovery"]["group"], "default/weir")
@@ -229,31 +233,42 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(scaled["maxReplicaCount"], 128)
 
     def test_extended_lifecycle_timers_follow_native_progress_relation(self):
-        values = {"minReadySeconds": 200, "terminationGracePeriodSeconds": 600,
+        values = {"minReadySeconds": 200, "progressDeadlineSeconds": 600, "terminationGracePeriodSeconds": 600,
                   "preStopDelaySeconds": 400}
         resources = render(values)
         deployment = resources["Deployment"]["spec"]
         pod = deployment["template"]["spec"]
         self.assertEqual(deployment["minReadySeconds"], 200)
         probe = pod["containers"][0]["startupProbe"]
-        startup_budget = probe["failureThreshold"] * probe["periodSeconds"]
-        self.assertEqual(deployment["progressDeadlineSeconds"], 200 + startup_budget + 1)
+        startup_budget = probe["failureThreshold"] * 10
+        self.assertEqual(deployment["progressDeadlineSeconds"], 600)
         self.assertEqual(pod["terminationGracePeriodSeconds"], 600)
         self.assertEqual(pod["containers"][0]["lifecycle"]["preStop"]["sleep"]["seconds"], 400)
         # Both Kubernetes Deployment timing fields are int32 and the progress
         # deadline must strictly exceed minReadySeconds.
         values["minReadySeconds"] = 2147483646 - startup_budget
+        values["progressDeadlineSeconds"] = 2147483647
         self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 2147483647)
         self.assertEqual(render()["Deployment"]["spec"]["progressDeadlineSeconds"], 180)
 
+        values["minReadySeconds"] += 1
+        rejected = render(values, success=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("must exceed", rejected.stderr)
+
+        values = {"progressDeadlineSeconds": 36}
+        self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 36)
+        values["progressDeadlineSeconds"] = 35
+        self.assertNotEqual(render(values, success=False).returncode, 0)
+
     def test_process_lifecycle_drives_startup_and_shutdown_budgets(self):
         lifecycle = {"startupTimeoutSeconds": 300, "shutdownTimeoutSeconds": 120, "cleanupTimeoutSeconds": 10}
-        values = {"lifecycle": lifecycle, "preStopDelaySeconds": 30}
+        values = {"lifecycle": lifecycle, "preStopDelaySeconds": 30, "progressDeadlineSeconds": 600}
         resources = render(values)
         deployment = resources["Deployment"]["spec"]
         pod = deployment["template"]["spec"]
         probe = pod["containers"][0]["startupProbe"]
-        startup_budget = probe["failureThreshold"] * probe["periodSeconds"]
+        startup_budget = probe["failureThreshold"] * 10
         self.assertGreater(startup_budget, 300)
         self.assertGreater(deployment["progressDeadlineSeconds"], startup_budget + deployment["minReadySeconds"])
         self.assertEqual(pod["terminationGracePeriodSeconds"], 171)
@@ -291,10 +306,15 @@ class ChartTests(unittest.TestCase):
             self.assertEqual(command[command.index("--timeout") + 1], "1500ms")
             self.assertEqual(probe["timeoutSeconds"], 3)
 
-        values["probeTimeoutMilliseconds"] = 60000
+        values["probeTimeoutMilliseconds"] = 90000
+        rejected = render(values, success=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("progressDeadlineSeconds must exceed", rejected.stderr)
+        values["progressDeadlineSeconds"] = 200
         deployment = render(values)["Deployment"]["spec"]
         probe = deployment["template"]["spec"]["containers"][0]["startupProbe"]
         startup_budget = probe["timeoutSeconds"] * probe["failureThreshold"]
+        self.assertEqual(deployment["progressDeadlineSeconds"], 200)
         self.assertGreater(deployment["progressDeadlineSeconds"], startup_budget + deployment["minReadySeconds"])
 
     def test_promtool_regression_uses_the_actual_autoscaling_example_query(self):
@@ -395,6 +415,7 @@ class ChartTests(unittest.TestCase):
             {"metrics": {"serviceMonitor": {"labels": {"app.kubernetes.io/instance": "other"}}}},
             {"replicaCount": 0}, {"unknownSetting": True},
             {"minReadySeconds": -1}, {"minReadySeconds": 2147483646}, {"minReadySeconds": 2147483647}, {"terminationGracePeriodSeconds": 20},
+            {"progressDeadlineSeconds": 0}, {"progressDeadlineSeconds": 2147483648},
             {"preStopDelaySeconds": -1}, {"image": {"digest": "sha256:bad"}}, {"image": {"digest": ""}},
             {"probeTimeoutMilliseconds": 0}, {"probeTimeoutMilliseconds": 1.5},
             {"probeTimeoutMilliseconds": 2147483646001},

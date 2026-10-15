@@ -16,6 +16,7 @@
     "fullnameOverride",
     "replicaCount",
     "minReadySeconds",
+    "progressDeadlineSeconds",
     "terminationGracePeriodSeconds",
     "preStopDelaySeconds",
     "image",
@@ -96,6 +97,11 @@
       "type": "integer",
       "minimum": 0,
       "maximum": 2147483646
+    },
+    "progressDeadlineSeconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
     },
     "terminationGracePeriodSeconds": {
       "type": "integer",
