@@ -108,6 +108,9 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(peer_egress["ports"][0]["port"], "peer")
         self.assertEqual(resources["Services"]["weir-weir-mesh"]["spec"]["ports"][1]["targetPort"], "peer")
         self.assertEqual(policy["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["weir-client"], "true")
+        self.assertEqual(policy["ingress"][0]["ports"][0]["port"], "grpc")
+        container_ports = resources["Deployment"]["spec"]["template"]["spec"]["containers"][0]["ports"]
+        self.assertEqual(next(port["containerPort"] for port in container_ports if port["name"] == "grpc"), 7557)
 
     def test_configuration_rolls_and_external_secret_supplies_only_routes(self):
         first, second = process_values("30s"), process_values("20s")
@@ -134,10 +137,14 @@ class ChartTests(unittest.TestCase):
 
     def test_derived_identity_and_addresses_follow_ports_domain_and_overrides(self):
         values = {"fullnameOverride": "custom", "clusterDomain": "cluster.internal", "service": {"port": 7557},
-                  "mesh": {"port": 7558, "seeds": ["other.ns.svc.cluster.internal:7558"]}, "diagnostics": {"port": 7559}}
+                  "mesh": {"port": 7558, "seeds": ["other.ns.svc.cluster.internal:7558"]}, "diagnosticsPort": 7559,
+                  "nodeConfig": {"discovery": {"lease": "90s", "sync_interval": "2s", "sync_timeout": "500ms"}}}
         resources = render(values, release="payments", namespace="backend")
         node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
         self.assertEqual(node["discovery"]["group"], "backend/payments")
+        self.assertEqual(node["discovery"]["lease"], "90s")
+        self.assertEqual(node["discovery"]["sync_interval"], "2s")
+        self.assertEqual(node["discovery"]["sync_timeout"], "500ms")
         self.assertEqual(node["discovery"]["advertise"], ["custom-headless.backend.svc.cluster.internal:7557"])
         self.assertEqual(node["discovery"]["seeds"], ["custom-mesh.backend.svc.cluster.internal:7558", "other.ns.svc.cluster.internal:7558"])
         self.assertEqual(node["listeners"]["application"], "[::]:7557")
@@ -153,7 +160,7 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(deployment["replicas"], 3)
         self.assertEqual(deployment["minReadySeconds"], 15)
         pod = deployment["template"]["spec"]
-        self.assertEqual(pod["terminationGracePeriodSeconds"], 45)
+        self.assertEqual(pod["terminationGracePeriodSeconds"], 25)
         self.assertEqual(pod["containers"][0]["lifecycle"]["preStop"]["sleep"]["seconds"], 15)
         self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxSurge"], 0)
         self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxUnavailable"], 1)
@@ -228,14 +235,67 @@ class ChartTests(unittest.TestCase):
         deployment = resources["Deployment"]["spec"]
         pod = deployment["template"]["spec"]
         self.assertEqual(deployment["minReadySeconds"], 200)
-        self.assertEqual(deployment["progressDeadlineSeconds"], 201)
+        probe = pod["containers"][0]["startupProbe"]
+        startup_budget = probe["failureThreshold"] * probe["periodSeconds"]
+        self.assertEqual(deployment["progressDeadlineSeconds"], 200 + startup_budget + 1)
         self.assertEqual(pod["terminationGracePeriodSeconds"], 600)
         self.assertEqual(pod["containers"][0]["lifecycle"]["preStop"]["sleep"]["seconds"], 400)
         # Both Kubernetes Deployment timing fields are int32 and the progress
         # deadline must strictly exceed minReadySeconds.
-        values["minReadySeconds"] = 2147483646
+        values["minReadySeconds"] = 2147483646 - startup_budget
         self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 2147483647)
         self.assertEqual(render()["Deployment"]["spec"]["progressDeadlineSeconds"], 180)
+
+    def test_process_lifecycle_drives_startup_and_shutdown_budgets(self):
+        lifecycle = {"startupTimeoutSeconds": 300, "shutdownTimeoutSeconds": 120, "cleanupTimeoutSeconds": 10}
+        values = {"lifecycle": lifecycle, "preStopDelaySeconds": 30}
+        resources = render(values)
+        deployment = resources["Deployment"]["spec"]
+        pod = deployment["template"]["spec"]
+        probe = pod["containers"][0]["startupProbe"]
+        startup_budget = probe["failureThreshold"] * probe["periodSeconds"]
+        self.assertGreater(startup_budget, 300)
+        self.assertGreater(deployment["progressDeadlineSeconds"], startup_budget + deployment["minReadySeconds"])
+        self.assertEqual(pod["terminationGracePeriodSeconds"], 171)
+        node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
+        expected_lifecycle = {"startup_timeout": "300s", "shutdown_timeout": "120s", "cleanup_timeout": "10s"}
+        self.assertEqual(node["lifecycle"], expected_lifecycle)
+
+        values["terminationGracePeriodSeconds"] = 180
+        self.assertEqual(render(values)["Deployment"]["spec"]["template"]["spec"]["terminationGracePeriodSeconds"], 180)
+        values["terminationGracePeriodSeconds"] = 170
+        rejected = render(values, success=False)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("at least 171", rejected.stderr)
+
+    def test_lifecycle_profile_uses_native_integer_seconds(self):
+        for field in ("startupTimeoutSeconds", "shutdownTimeoutSeconds", "cleanupTimeoutSeconds"):
+            for seconds in (0, -5, 1.5, "5s", 9223372037):
+                with self.subTest(field=field, seconds=seconds):
+                    values = {"lifecycle": {field: seconds}}
+                    rejected = render(values, success=False)
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertIn(field, rejected.stderr)
+                    self.assertEqual(rejected.stdout, "")
+
+        values = {"lifecycle": {"shutdownTimeoutSeconds": 1000000000}}
+        node = yaml.safe_load(render(values)["ConfigMap"]["data"]["node.yaml"])
+        self.assertEqual(node["lifecycle"]["shutdown_timeout"], "1000000000s")
+
+    def test_probe_deadline_drives_cli_and_kubelet_timeout(self):
+        values = {"probeTimeoutMilliseconds": 1500}
+        container = render(values)["Deployment"]["spec"]["template"]["spec"]["containers"][0]
+        for name in ("startupProbe", "readinessProbe", "livenessProbe"):
+            probe = container[name]
+            command = probe["exec"]["command"]
+            self.assertEqual(command[command.index("--timeout") + 1], "1500ms")
+            self.assertEqual(probe["timeoutSeconds"], 3)
+
+        values["probeTimeoutMilliseconds"] = 60000
+        deployment = render(values)["Deployment"]["spec"]
+        probe = deployment["template"]["spec"]["containers"][0]["startupProbe"]
+        startup_budget = probe["timeoutSeconds"] * probe["failureThreshold"]
+        self.assertGreater(deployment["progressDeadlineSeconds"], startup_budget + deployment["minReadySeconds"])
 
     def test_promtool_regression_uses_the_actual_autoscaling_example_query(self):
         example = yaml.safe_load((ROOT / "examples/prometheus-autoscaling.yaml").read_text())
@@ -252,7 +312,7 @@ class ChartTests(unittest.TestCase):
             result = render(invalid, success=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, "")
-            self.assertIn("stores cannot contain backend credentials", result.stderr)
+            self.assertIn("Additional property", result.stderr)
         for adapter, field, uri in (("mongodb", "uri", "mongodb://user:password@mongo:27017"), ("search", "url", "https://user:password@search:9200")):
             invalid = {"stores": [{"name": "store", "backend": {adapter: {field: uri}}}]}
             self.assertIn("userinfo is unsupported", render(invalid, success=False).stderr)
@@ -261,22 +321,30 @@ class ChartTests(unittest.TestCase):
         invalid = {"extraVolumeMounts": [{"name": "extra", "mountPath": "/extra", "readOnly": False}]}
         self.assertNotEqual(render(invalid, success=False).returncode, 0)
 
-    def test_removed_authentication_layouts_fail_before_rendering(self):
+    def test_backend_configuration_rejects_unknown_structure(self):
         backends = [
-            {"mongodb": {"uri": "mongodb://mongo:27017", "username": "test-user", "password": "test-password"}},
-            {"mongodb": {"uri": "mongodb://mongo:27017", "username_file": "/auth/username", "password_file": "/auth/password"}},
-            {"search": {"url": "https://search:9200", "connection": {}}},
-            {"search": {"url": "https://search:9200", "connection": None}},
+            {"mongodb": {"uri": "mongodb://mongo:27017", "unexpected": True}},
+            {"search": {"url": "https://search:9200", "unexpected": None}},
+            {"mongodb": {"uri": "mongodb://mongo:27017"}, "unexpected": {}},
+            {"mongodb": {"uri": "mongodb://mongo:27017"}, "search": {"url": "http://search:9200"}},
+            {"authentication": {"username_file": "/auth/username"}},
         ]
-        for field in ("username", "password", "username_file", "password_file"):
-            for value in ("", None):
-                backends.append({"mongodb": {"uri": "mongodb://mongo:27017", field: value}})
         for backend in backends:
             invalid = {"stores": [{"name": "store", "backend": backend}]}
             result = render(invalid, success=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, "")
-            self.assertIn("unsupported; use backend.authentication", result.stderr)
+
+    def test_adapter_settings_are_passed_directly_without_default_overrides(self):
+        mongo = {"uri": "mongodb://mongo:27017", "max_connecting": 3, "metadata_cache_entries": 0,
+                 "retry_attempts": 2, "retry_backoff": "0s"}
+        search = {"url": "http://search:9200", "retry_attempts": 1,
+                  "pit_keep_alive": "90s", "idle_timeout": "0s"}
+        stores = [{"name": "mongo", "backend": {"mongodb": mongo}},
+                  {"name": "search", "backend": {"search": search}}]
+        values = {"stores": stores}
+        routes = yaml.safe_load(render(values)["ConfigMap"]["data"]["routes.yaml"])
+        self.assertEqual(routes["stores"], stores)
 
     def test_common_file_authentication_is_rendered_for_both_backends(self):
         stores = []
@@ -326,11 +394,15 @@ class ChartTests(unittest.TestCase):
             {"metrics": {"enabled": True}}, {"metrics": {"serviceMonitor": {"enabled": True}}},
             {"metrics": {"serviceMonitor": {"labels": {"app.kubernetes.io/instance": "other"}}}},
             {"replicaCount": 0}, {"unknownSetting": True},
-            {"minReadySeconds": -1}, {"minReadySeconds": 2147483647}, {"terminationGracePeriodSeconds": 20},
+            {"minReadySeconds": -1}, {"minReadySeconds": 2147483646}, {"minReadySeconds": 2147483647}, {"terminationGracePeriodSeconds": 20},
             {"preStopDelaySeconds": -1}, {"image": {"digest": "sha256:bad"}}, {"image": {"digest": ""}},
+            {"probeTimeoutMilliseconds": 0}, {"probeTimeoutMilliseconds": 1.5},
+            {"probeTimeoutMilliseconds": 2147483646001},
             {"podAnnotations": {"weir.batchstream.io/source-revision": "unverified"}},
             {"config": {"existingSecret": "old"}}, {"peer": {"enabled": True}},
-            {"nodeConfig": {"listeners": {}}}, {"nodeConfig": {"discovery": {}}},
+            {"nodeConfig": {"listeners": {}}}, {"nodeConfig": {"discovery": {"group": "manual"}}},
+            {"nodeConfig": {"lifecycle": {}}}, {"nodeConfig": {"lua": {"vm": {}}}},
+            {"nodeConfig": {"discovery": {"seeds": []}}},
             {"nodeConfig": {"diagnostics": {"address": "127.0.0.1:1234"}}},
             {"nodeConfig": {"diagnostics": {"allow_intranet": True}}},
             {"mesh": {"name": "INVALID"}}, {"mesh": {"enabled": False, "seeds": ["other:7448"]}},

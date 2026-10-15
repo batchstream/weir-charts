@@ -14,8 +14,14 @@ stores: []
 # An external Secret may supply routes.yaml instead of a non-empty stores list.
 storesSecret: ""
 storesRevision: ""
-# Process settings only; listeners, discovery and metrics access are Chart-managed.
+# Process policy only; lifecycle, addresses and metrics access are Chart-managed.
+# Optional discovery.lease/sync_interval/sync_timeout remain user-controlled policy.
 nodeConfig: {}
+# This deployment profile drives both Weir lifecycle timers and Pod budgets.
+lifecycle:
+  startupTimeoutSeconds: 5
+  shutdownTimeoutSeconds: 5
+  cleanupTimeoutSeconds: 2
 service:
   port: 7447
   annotations: {}
@@ -25,8 +31,9 @@ mesh:
   port: 7448
   # Additional peer endpoints; cross-namespace access needs explicit network rules.
   seeds: []
-diagnostics:
-  port: 7449
+diagnosticsPort: 7449
+# The CLI deadline; kubelet's whole-second timeout is rounded up plus one second.
+probeTimeoutMilliseconds: 750
 metrics:
   enabled: false
   annotations: {}
@@ -58,7 +65,10 @@ resources:
     cpu: "2"
     memory: 3Gi
 preStopDelaySeconds: 15
-terminationGracePeriodSeconds: 45
+# 0 derives preStopDelaySeconds + shutdownTimeoutSeconds + 2*cleanupTimeoutSeconds + one second.
+# Cleanup has two sequential bounded phases; the extra second permits final exit.
+# A positive override can reserve more exit overhead and must cover this budget.
+terminationGracePeriodSeconds: 0
 strategy:
   type: RollingUpdate
   rollingUpdate:
@@ -76,7 +86,7 @@ networkPolicy:
               weir-client: "true"
       ports:
         - protocol: TCP
-          port: 7447
+          port: grpc
   # Add precise backend destinations and any extra peer endpoints here.
   egress: []
   dns:

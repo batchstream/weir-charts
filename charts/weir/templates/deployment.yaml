@@ -1,4 +1,20 @@
 {{- include "weir.validate" . -}}
+{{- $startup := int .Values.lifecycle.startupTimeoutSeconds -}}
+{{- $probeMilliseconds := int .Values.probeTimeoutMilliseconds -}}
+{{- $probeTimeout := printf "%dms" $probeMilliseconds -}}
+{{- $probeSeconds := add (div (add $probeMilliseconds 999) 1000) 1 -}}
+{{- $startupFailures := add (div (add $startup 1) 2) 1 -}}
+{{- $progress := max 180 (add (int .Values.minReadySeconds) (mul $startupFailures (max 2 $probeSeconds)) 1) -}}
+{{- if gt $progress 2147483647 -}}
+{{- fail "minReadySeconds plus the derived startup probe budget must fit the Kubernetes int32 progress deadline" -}}
+{{- end -}}
+{{- $shutdown := int .Values.lifecycle.shutdownTimeoutSeconds -}}
+{{- $cleanup := int .Values.lifecycle.cleanupTimeoutSeconds -}}
+{{- $minimumGrace := add (int .Values.preStopDelaySeconds) $shutdown (mul $cleanup 2) 1 -}}
+{{- $grace := int (default $minimumGrace .Values.terminationGracePeriodSeconds) -}}
+{{- if lt $grace $minimumGrace -}}
+{{- fail (printf "terminationGracePeriodSeconds must be 0 (automatic) or at least %d: preStopDelaySeconds + shutdownTimeoutSeconds + two cleanupTimeoutSeconds phases + one second for final exit" $minimumGrace) -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11,7 +27,7 @@ spec:
   {{- end }}
   minReadySeconds: {{ .Values.minReadySeconds }}
   revisionHistoryLimit: 3
-  progressDeadlineSeconds: {{ max 180 (add (int .Values.minReadySeconds) 1) }}
+  progressDeadlineSeconds: {{ $progress }}
   strategy:
     type: {{ .Values.strategy.type }}
     {{- if eq .Values.strategy.type "RollingUpdate" }}
@@ -38,7 +54,7 @@ spec:
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
-      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ $grace }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -69,7 +85,7 @@ spec:
             {{- end }}
             {{- if .Values.metrics.enabled }}
             - name: metrics
-              containerPort: {{ .Values.diagnostics.port }}
+              containerPort: {{ .Values.diagnosticsPort }}
             {{- end }}
           {{- if .Values.mesh.enabled }}
           env:
@@ -90,20 +106,20 @@ spec:
           {{- end }}
           startupProbe:
             exec:
-              command: ["/weir", "probe", "ready", "--address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
-            timeoutSeconds: 2
+              command: ["/weir", "probe", "ready", "--timeout", {{ $probeTimeout | quote }}, "--address", "127.0.0.1:{{ .Values.diagnosticsPort }}"]
+            timeoutSeconds: {{ $probeSeconds }}
             periodSeconds: 2
-            failureThreshold: 15
+            failureThreshold: {{ $startupFailures }}
           readinessProbe:
             exec:
-              command: ["/weir", "probe", "ready", "--address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
-            timeoutSeconds: 2
+              command: ["/weir", "probe", "ready", "--timeout", {{ $probeTimeout | quote }}, "--address", "127.0.0.1:{{ .Values.diagnosticsPort }}"]
+            timeoutSeconds: {{ $probeSeconds }}
             periodSeconds: 2
             failureThreshold: 1
           livenessProbe:
             exec:
-              command: ["/weir", "probe", "live", "--address", "127.0.0.1:{{ .Values.diagnostics.port }}"]
-            timeoutSeconds: 2
+              command: ["/weir", "probe", "live", "--timeout", {{ $probeTimeout | quote }}, "--address", "127.0.0.1:{{ .Values.diagnosticsPort }}"]
+            timeoutSeconds: {{ $probeSeconds }}
             periodSeconds: 5
             failureThreshold: 3
           volumeMounts:

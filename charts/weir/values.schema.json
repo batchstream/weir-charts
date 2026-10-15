@@ -20,7 +20,8 @@
     "preStopDelaySeconds",
     "image",
     "service",
-    "diagnostics",
+    "diagnosticsPort",
+    "probeTimeoutMilliseconds",
     "podDisruptionBudget",
     "strategy",
     "networkPolicy",
@@ -31,7 +32,8 @@
     "clusterDomain",
     "nodeConfig",
     "mesh",
-    "autoscaling"
+    "autoscaling",
+    "lifecycle"
   ],
   "properties": {
     "resources": {
@@ -97,7 +99,7 @@
     },
     "terminationGracePeriodSeconds": {
       "type": "integer",
-      "minimum": 10
+      "minimum": 0
     },
     "preStopDelaySeconds": {
       "type": "integer",
@@ -144,20 +146,6 @@
         },
         "annotations": {
           "type": "object"
-        }
-      }
-    },
-    "diagnostics": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "port"
-      ],
-      "properties": {
-        "port": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
         }
       }
     },
@@ -287,7 +275,107 @@
           },
           "backend": {
             "type": "object",
-            "minProperties": 1
+            "additionalProperties": false,
+            "properties": {
+              "mongodb": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "uri"
+                ],
+                "properties": {
+                  "uri": {
+                    "type": "string"
+                  },
+                  "max_connecting": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "metadata_cache_entries": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "retry_attempts": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "retry_backoff": {
+                    "type": "string"
+                  }
+                }
+              },
+              "search": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "retry_attempts": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "pit_keep_alive": {
+                    "type": "string"
+                  },
+                  "idle_timeout": {
+                    "type": "string"
+                  }
+                }
+              },
+              "authentication": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "username_file": {
+                    "type": "string"
+                  },
+                  "password_file": {
+                    "type": "string"
+                  }
+                }
+              },
+              "tls": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "ca_file": {
+                    "type": "string"
+                  }
+                }
+              },
+              "connect_timeout": {
+                "type": "string"
+              },
+              "max_exchange_bytes": {
+                "type": "string"
+              }
+            },
+            "oneOf": [
+              {
+                "required": [
+                  "mongodb"
+                ],
+                "not": {
+                  "required": [
+                    "search"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "search"
+                ],
+                "not": {
+                  "required": [
+                    "mongodb"
+                  ]
+                }
+              }
+            ]
           },
           "queue": {
             "type": "object"
@@ -318,16 +406,46 @@
       "additionalProperties": false,
       "properties": {
         "lua": {
-          "type": "object"
-        },
-        "lifecycle": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_instructions": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_call_depth": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_stack_slots": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         },
         "transport": {
           "type": "object"
         },
         "overload": {
           "type": "object"
+        },
+        "discovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "lease": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sync_interval": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sync_timeout": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         },
         "diagnostics": {
           "type": "object",
@@ -517,6 +635,46 @@
           }
         }
       }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startupTimeoutSeconds",
+        "shutdownTimeoutSeconds",
+        "cleanupTimeoutSeconds"
+      ],
+      "properties": {
+        "startupTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036,
+          "description": "Whole seconds within the Go duration range; generated Weir and Pod budgets share this value."
+        },
+        "shutdownTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036,
+          "description": "Whole seconds within the Go duration range; generated Weir and Pod budgets share this value."
+        },
+        "cleanupTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036,
+          "description": "Whole seconds within the Go duration range; generated Weir and Pod budgets share this value."
+        }
+      }
+    },
+    "diagnosticsPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "probeTimeoutMilliseconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483646000,
+      "description": "Probe CLI deadline in milliseconds; kubelet timeoutSeconds is rounded up plus one second and must fit int32."
     }
   }
 }
