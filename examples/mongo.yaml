@@ -6,12 +6,6 @@ stores:
   backend:
     mongodb:
       uri: mongodb://mongo:27017/?directConnection=true
-  batching:
-    max_operations: 32
-    max_bytes: 8MiB
-  queue:
-    max_operations: 1024
-    max_bytes: 32MiB
 networkPolicy:
   egress:
   - to:

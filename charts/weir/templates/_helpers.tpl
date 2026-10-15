@@ -37,15 +37,19 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- define "weir.node" -}}
 {{- $node := deepCopy .Values.nodeConfig -}}
+{{- $lifecycle := dict "startup_timeout" (printf "%ds" (int .Values.lifecycle.startupTimeoutSeconds)) "shutdown_timeout" (printf "%ds" (int .Values.lifecycle.shutdownTimeoutSeconds)) "cleanup_timeout" (printf "%ds" (int .Values.lifecycle.cleanupTimeoutSeconds)) -}}
+{{- $_ := set $node "lifecycle" $lifecycle -}}
 {{- $listeners := dict "application" (printf "[::]:%v" .Values.service.port) -}}
 {{- $diagnostics := default dict $node.diagnostics -}}
-{{- $_ := set $diagnostics "address" (printf "127.0.0.1:%v" .Values.diagnostics.port) -}}
+{{- $_ := set $diagnostics "address" (printf "127.0.0.1:%v" .Values.diagnosticsPort) -}}
 {{- if .Values.metrics.enabled -}}
-{{- $_ := set $diagnostics "address" (printf "[::]:%v" .Values.diagnostics.port) -}}
+{{- $_ := set $diagnostics "address" (printf "[::]:%v" .Values.diagnosticsPort) -}}
 {{- $_ := set $diagnostics "allow_intranet" true -}}
 {{- end -}}
 {{- $advertise := printf "%s:%v" (include "weir.address" (dict "root" . "name" (include "weir.headlessName" .))) .Values.service.port -}}
-{{- $discovery := dict "group" (include "weir.group" .) "advertise" (list $advertise) -}}
+{{- $discovery := default dict $node.discovery -}}
+{{- $_ := set $discovery "group" (include "weir.group" .) -}}
+{{- $_ := set $discovery "advertise" (list $advertise) -}}
 {{- if .Values.mesh.enabled -}}
 {{- $_ := set $listeners "peer" (printf "[::]:%v" .Values.mesh.port) -}}
 {{- $_ := set $discovery "peer_address_env" "WEIR_PEER_ADDRESS" -}}
@@ -63,11 +67,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail (printf "%s is managed by the Chart and cannot be overridden in podAnnotations" $key) -}}
 {{- end -}}
 {{- end -}}
-{{- if lt (int .Values.terminationGracePeriodSeconds) (add (int .Values.preStopDelaySeconds) 10) -}}
-{{- fail "terminationGracePeriodSeconds must allow preStopDelaySeconds plus at least 10 seconds for Weir shutdown" -}}
-{{- end -}}
-{{- if or (eq (int .Values.service.port) (int .Values.diagnostics.port)) (and .Values.mesh.enabled (or (eq (int .Values.mesh.port) (int .Values.service.port)) (eq (int .Values.mesh.port) (int .Values.diagnostics.port)))) -}}
-{{- fail "service.port, diagnostics.port and enabled mesh.port must be distinct" -}}
+{{- if or (eq (int .Values.service.port) (int .Values.diagnosticsPort)) (and .Values.mesh.enabled (or (eq (int .Values.mesh.port) (int .Values.service.port)) (eq (int .Values.mesh.port) (int .Values.diagnosticsPort)))) -}}
+{{- fail "service.port, diagnosticsPort and enabled mesh.port must be distinct" -}}
 {{- end -}}
 {{- range $key := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" "app.kubernetes.io/version" "app.kubernetes.io/managed-by" "helm.sh/chart" -}}
 {{- if hasKey $.Values.metrics.serviceMonitor.labels $key -}}
@@ -83,17 +84,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- $_ := set $names .name true -}}
 {{- $backend := default dict .backend -}}
 {{- $mongodb := default dict $backend.mongodb -}}
-{{- if or (hasKey $mongodb "username") (hasKey $mongodb "password") (hasKey $mongodb "username_file") (hasKey $mongodb "password_file") -}}
-{{- fail "removed MongoDB authentication fields are unsupported; use backend.authentication" -}}
-{{- end -}}
 {{- $search := default dict $backend.search -}}
-{{- if hasKey $search "connection" -}}
-{{- fail "backend.search.connection is unsupported; use backend.authentication and backend.tls" -}}
-{{- end -}}
-{{- $authentication := default dict $backend.authentication -}}
-{{- if or $authentication.username $authentication.password -}}
-{{- fail "stores cannot contain backend credentials; use username_file/password_file and external Secret mounts" -}}
-{{- end -}}
 {{- if or (regexMatch "^[^:]+://[^/?#]*@" (default "" $mongodb.uri)) (regexMatch "^[^:]+://[^/?#]*@" (default "" $search.url)) -}}
 {{- fail "backend URI userinfo is unsupported; use credential-file authentication" -}}
 {{- end -}}

@@ -16,7 +16,7 @@ spec:
     {{- include "weir.selectorLabels" . | nindent 4 }}
   ports:
     - name: metrics
-      port: {{ .Values.diagnostics.port }}
+      port: {{ .Values.diagnosticsPort }}
       targetPort: metrics
       protocol: TCP
 {{- end }}

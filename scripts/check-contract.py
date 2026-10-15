@@ -50,7 +50,6 @@ def validate_config(binary, resources, directory, pod_ip="127.0.0.1"):
 
 
 def check_large_configuration(binary, directory):
-    # This only invokes `check`: no seed resolution, backend I/O or replicas.
     stores = []
     for index in range(32):
         name = "store" + str(index)
@@ -63,7 +62,7 @@ def check_large_configuration(binary, directory):
         stores.append(store)
     seeds = ["peer" + str(index) + ".example:7448" for index in range(32)]
     values = {"stores": stores, "mesh": {"seeds": seeds}, "replicaCount": 128,
-              "minReadySeconds": 200, "terminationGracePeriodSeconds": 600,
+              "minReadySeconds": 200, "progressDeadlineSeconds": 600, "terminationGracePeriodSeconds": 600,
               "preStopDelaySeconds": 400}
     resources = render(values)
     validate_config(binary, resources, directory)
@@ -89,7 +88,7 @@ def check_runtime(binary, directory):
     app_port = application.getsockname()[1]
     diagnostic_port = diagnostics.getsockname()[1]
     values = {"mesh": {"enabled": False}, "service": {"port": app_port},
-              "diagnostics": {"port": diagnostic_port}}
+              "diagnosticsPort": diagnostic_port, "probeTimeoutMilliseconds": 1250}
     resources = render(values)
     container, args, environment = validate_config(binary, resources, directory)
     application.close()
@@ -140,10 +139,18 @@ def main():
         for release, values in fixtures:
             resources = render(values, release)
             validate_config(binary, resources, directory)
-            # Generated wildcard listeners and advertised Pod addresses support both families.
             validate_config(binary, resources, directory, "fd00::123")
             custom = copy.deepcopy(values)
             custom.update(fullnameOverride="custom", clusterDomain="cluster.internal")
+            custom.setdefault("nodeConfig", {})["discovery"] = {"lease": "90s", "sync_interval": "2s", "sync_timeout": "500ms"}
+            custom["lifecycle"] = {"startupTimeoutSeconds": 7, "shutdownTimeoutSeconds": 9, "cleanupTimeoutSeconds": 3}
+            for store in custom["stores"]:
+                backend = store["backend"]
+                if "mongodb" in backend:
+                    backend["mongodb"].update(max_connecting=3, metadata_cache_entries=0,
+                                              retry_attempts=2, retry_backoff="0s")
+                else:
+                    backend["search"].update(retry_attempts=1, pit_keep_alive="90s", idle_timeout="0s")
             validate_config(binary, render(custom, release), directory)
             replicas = copy.deepcopy(values)
             replicas.update(yaml.safe_load((ROOT / "examples/three-replicas.yaml").read_text()))
@@ -161,11 +168,11 @@ def main():
         backend["search"]["url"] = "https://search:9200"
         backend["authentication"] = {"username_file": "test-user.txt", "password_file": "test-password.txt"}
         validate_config(binary, render(files, "search"), directory)
-        # A real binary must reject old fields that a permissive Helm object could accept.
-        old = copy.deepcopy(fixtures[0][1])
-        old["nodeConfig"] = {"transport": {"max_pending_records": -1}}
+        # Server validation owns process semantics beyond the Chart's boundaries.
+        invalid = copy.deepcopy(fixtures[0][1])
+        invalid["nodeConfig"] = {"transport": {"max_pending_records": -1}}
         try:
-            validate_config(binary, render(old), directory)
+            validate_config(binary, render(invalid), directory)
         except subprocess.CalledProcessError:
             pass
         else:
