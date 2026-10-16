@@ -324,9 +324,6 @@
                     "type": "integer",
                     "minimum": 0
                   },
-                  "pit_keep_alive": {
-                    "type": "string"
-                  },
                   "idle_timeout": {
                     "type": "string"
                   }
@@ -387,9 +384,6 @@
             "type": "object"
           },
           "batching": {
-            "type": "object"
-          },
-          "scan": {
             "type": "object"
           }
         }

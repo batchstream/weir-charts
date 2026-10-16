@@ -150,7 +150,7 @@ def main():
                     backend["mongodb"].update(max_connecting=3, metadata_cache_entries=0,
                                               retry_attempts=2, retry_backoff="0s")
                 else:
-                    backend["search"].update(retry_attempts=1, pit_keep_alive="90s", idle_timeout="0s")
+                    backend["search"].update(retry_attempts=1, idle_timeout="0s")
             validate_config(binary, render(custom, release), directory)
             replicas = copy.deepcopy(values)
             replicas.update(yaml.safe_load((ROOT / "examples/three-replicas.yaml").read_text()))
