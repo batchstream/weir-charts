@@ -345,6 +345,7 @@ class ChartTests(unittest.TestCase):
         backends = [
             {"mongodb": {"uri": "mongodb://mongo:27017", "unexpected": True}},
             {"search": {"url": "https://search:9200", "unexpected": None}},
+            {"search": {"url": "https://search:9200", "pit_keep_alive": "90s"}},
             {"mongodb": {"uri": "mongodb://mongo:27017"}, "unexpected": {}},
             {"mongodb": {"uri": "mongodb://mongo:27017"}, "search": {"url": "http://search:9200"}},
             {"authentication": {"username_file": "/auth/username"}},
@@ -359,7 +360,7 @@ class ChartTests(unittest.TestCase):
         mongo = {"uri": "mongodb://mongo:27017", "max_connecting": 3, "metadata_cache_entries": 0,
                  "retry_attempts": 2, "retry_backoff": "0s"}
         search = {"url": "http://search:9200", "retry_attempts": 1,
-                  "pit_keep_alive": "90s", "idle_timeout": "0s"}
+                  "idle_timeout": "0s"}
         stores = [{"name": "mongo", "backend": {"mongodb": mongo}},
                   {"name": "search", "backend": {"search": search}}]
         values = {"stores": stores}
@@ -427,6 +428,7 @@ class ChartTests(unittest.TestCase):
             {"nodeConfig": {"diagnostics": {"address": "127.0.0.1:1234"}}},
             {"nodeConfig": {"diagnostics": {"allow_intranet": True}}},
             {"mesh": {"name": "INVALID"}}, {"mesh": {"enabled": False, "seeds": ["other:7448"]}},
+            {"stores": [dict(store, scan={})]},
             {"stores": [store, store]}, {"stores": [store], "storesSecret": "external"},
             {"autoscaling": {"enabled": True}}, {"autoscaling": {"minReplicaCount": 0}},
             {"autoscaling": {"enabled": True, "minReplicaCount": 3, "maxReplicaCount": 2, "triggers": [trigger]}},

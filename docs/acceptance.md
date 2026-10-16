@@ -35,8 +35,9 @@ collection, and Elasticsearch 8.19.22, one shard/no replicas, pre-created index,
 `action.auto_create_index=false`. Their disposable emptyDir data is only a test
 fixture; it does not demonstrate production database durability or failover.
 
-Server-side dry-run and Helm installation passed. SDK head `88dc043` exercised all
-five RPCs against both real backends with the race detector: Mongo 3.93 seconds,
+Server-side dry-run and Helm installation passed. Historical SDK head `88dc043`
+exercised the then-current five RPCs against both real backends with the race
+detector: Mongo 3.93 seconds,
 Search 4.10 seconds, total test process 9.64 seconds. It covered duplicate Create,
 Read, Put/Replace, atomic expressions, ordered mixed Bulk, bounded Scan, Native,
 and Delete followed by missing Read. Test-owned records were cleaned up.
