@@ -1,3 +1,5 @@
+import copy
+import importlib.util
 import json
 import subprocess
 import tempfile
@@ -7,6 +9,9 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location("contract", ROOT / "scripts/check-contract.py")
+CONTRACT = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(CONTRACT)
 
 
 def render(values=None, success=True, release="weir", namespace="default"):
@@ -396,17 +401,76 @@ class ChartTests(unittest.TestCase):
         annotations = render(values)["Deployment"]["spec"]["template"]["metadata"]["annotations"]
         self.assertEqual(annotations["prometheus.io/path"], "/metrics")
 
+    def test_runtime_fixture_is_loopback_only_and_rejects_stores_or_peers(self):
+        values = {"mesh": {"enabled": False}}
+        config = render(values)["ConfigMap"]
+        resources = [copy.deepcopy(config)]
+        CONTRACT.isolate_runtime(resources, 7447, 7449)
+        node = yaml.safe_load(resources[0]["data"]["node.yaml"])
+        isolated_listeners = {"application": "127.0.0.1:7447"}
+        generated_listeners = {"application": "[::]:7447"}
+        self.assertEqual(node["listeners"], isolated_listeners)
+        self.assertEqual(node["diagnostics"]["address"], "127.0.0.1:7449")
+        self.assertEqual(yaml.safe_load(config["data"]["node.yaml"])["listeners"], generated_listeners)
+        for case in ("stores", "peer", "seeds", "peer_address_env", "diagnostics"):
+            with self.subTest(case=case):
+                unsafe = copy.deepcopy(config)
+                node = yaml.safe_load(unsafe["data"]["node.yaml"])
+                if case == "stores":
+                    unsafe["data"]["routes.yaml"] = "stores: [{name: forbidden}]"
+                elif case == "peer":
+                    node["listeners"]["peer"] = "127.0.0.1:7448"
+                elif case == "seeds":
+                    node["discovery"]["seeds"] = ["peer.example:7448"]
+                elif case == "peer_address_env":
+                    node["discovery"]["peer_address_env"] = "EXTERNAL_PEER"
+                else:
+                    node["diagnostics"]["address"] = "[::]:7449"
+                unsafe["data"]["node.yaml"] = yaml.safe_dump(node)
+                resources = [unsafe]
+                with self.assertRaises(RuntimeError):
+                    CONTRACT.isolate_runtime(resources, 7447, 7449)
+
+    def test_candidate_identity_matches_verified_distribution(self):
+        # Run 39305424091, artifact 12212914601: independently verified source/index pair.
+        revision = "26705ed5ce29555ca9edf50ccf012e0a5727230e"
+        digest = "sha256:c3713f8754519489cc8021ced8579ef9af95ead4789550ffd2243b17e4def544"
+        chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
+        values = yaml.safe_load((ROOT / "charts/weir/values.yaml").read_text())
+        self.assertEqual(chart["version"], "0.10.0-rc.1")
+        self.assertEqual(chart["annotations"]["weir.batchstream.io/source-revision"], revision)
+        self.assertEqual(values["image"]["repository"], "ghcr.io/batchstream/weir")
+        self.assertEqual(values["image"]["digest"], digest)
+        image = values["image"]["repository"] + "@" + digest
+        # Unlike the general render helper, validate the actual deployable default
+        # without tests/values.yaml's deliberately non-deployable image fixture.
+        command = ["helm", "template", "weir", str(ROOT / "charts/weir")]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+        deployment = next(item for item in yaml.safe_load_all(result.stdout) if item and item["kind"] == "Deployment")
+        self.assertEqual(deployment["spec"]["template"]["spec"]["containers"][0]["image"], image)
+        self.assertEqual(deployment["metadata"]["labels"]["helm.sh/chart"], "weir-" + chart["version"])
+        self.assertEqual(deployment["metadata"]["labels"]["app.kubernetes.io/version"], chart["appVersion"])
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("Chart **" + chart["version"] + " is a candidate, not a stable production release**", readme)
+        self.assertIn("https://github.com/batchstream/weir/commit/" + revision, readme)
+        self.assertIn("`" + image + "`", readme)
+        self.assertIn("https://github.com/batchstream/weir/actions/runs/39305424091", readme)
+        self.assertIn("`12212914601`", readme)
+
     def test_ci_builds_the_recorded_source_contract(self):
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
         revision = chart["annotations"]["weir.batchstream.io/source-revision"]
-        self.assertEqual(len(revision), 40)
+        self.assertRegex(revision, r"^[0-9a-f]{40}$")
         self.assertEqual(chart["appVersion"], revision[:12])
         self.assertEqual(render()["Deployment"]["spec"]["template"]["metadata"]["annotations"]["weir.batchstream.io/source-revision"], revision)
         for name in ("ci.yaml", "release.yaml"):
-            workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
-            steps = next(iter(workflow["jobs"].values()))["steps"]
-            source = next(step for step in steps if step.get("with", {}).get("repository") == "batchstream/weir")
-            self.assertEqual(source["with"]["ref"], revision)
+            with self.subTest(workflow=name):
+                workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
+                steps = next(iter(workflow["jobs"].values()))["steps"]
+                source = next(step for step in steps if step.get("with", {}).get("repository") == "batchstream/weir")
+                self.assertEqual(source["with"]["ref"], revision)
+                self.assertEqual(source["with"]["path"], ".weir-contract")
+                self.assertIs(source["with"]["persist-credentials"], False)
 
     def test_invalid_values_fail_before_cluster_mutation(self):
         store = {"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017"}}}
