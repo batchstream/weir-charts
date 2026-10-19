@@ -113,9 +113,9 @@ def check_runtime(binary, directory):
     diagnostics.close()
     with tempfile.TemporaryFile(mode="w+") as output:
         process = subprocess.Popen([binary, *args], env=environment, stdout=output, stderr=output)
-        print("Isolated no-Store runtime PID " + str(process.pid) + ", loopback ports "
-              + str(app_port) + "/" + str(diagnostic_port), flush=True)
         try:
+            print("Isolated no-Store runtime PID " + str(process.pid) + ", loopback ports "
+                  + str(app_port) + "/" + str(diagnostic_port), flush=True)
             deadline = time.monotonic() + 10
             while True:
                 command = [binary, *container["startupProbe"]["exec"]["command"][1:]]
@@ -138,11 +138,11 @@ def check_runtime(binary, directory):
                 process.kill()
                 process.wait(timeout=3)
                 raise RuntimeError("Weir did not drain after SIGTERM")
-            print("Isolated runtime PID " + str(process.pid) + " exited " + str(exit_code), flush=True)
             for port in (app_port, diagnostic_port):
                 with socket.socket() as listener:
                     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     listener.bind(("127.0.0.1", port))
+            print("Isolated runtime PID " + str(process.pid) + " exited " + str(exit_code), flush=True)
             print("Isolated runtime loopback ports released: " + str(app_port) + "/" + str(diagnostic_port), flush=True)
         if exit_code != 0:
             output.seek(0)

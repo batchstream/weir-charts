@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -430,6 +431,52 @@ class ChartTests(unittest.TestCase):
                 resources = [unsafe]
                 with self.assertRaises(RuntimeError):
                     CONTRACT.isolate_runtime(resources, 7447, 7449)
+
+    def test_runtime_logging_failures_still_reap_child_and_check_ports(self):
+        for error_type in (BrokenPipeError, OSError):
+            for persistent in (False, True):
+                with self.subTest(error=error_type.__name__, persistent=persistent):
+                    failure = error_type("injected stdout failure")
+                    print_failures = failure if persistent else [failure, None, None]
+                    process = mock.Mock()
+                    process.pid = 12345
+                    process.poll.return_value = None
+                    process.wait.return_value = 0
+                    application, diagnostics = mock.Mock(), mock.Mock()
+                    application.getsockname.return_value = ("127.0.0.1", 18001)
+                    diagnostics.getsockname.return_value = ("127.0.0.1", 18002)
+                    reservations = [application, diagnostics]
+                    released = [mock.MagicMock(), mock.MagicMock()]
+                    for listener in released:
+                        listener.__enter__.return_value = listener
+                    resources = []
+                    validation = ({}, ["serve"], {})
+                    directory = Path("/unused-mocked-runtime")
+                    with (
+                        mock.patch.object(CONTRACT, "reserve_port", side_effect=reservations),
+                        mock.patch.object(CONTRACT, "render", return_value=resources),
+                        mock.patch.object(CONTRACT, "validate_config", return_value=validation),
+                        mock.patch.object(CONTRACT, "isolate_runtime"),
+                        mock.patch.object(CONTRACT.tempfile, "TemporaryFile"),
+                        mock.patch.object(CONTRACT.subprocess, "Popen", return_value=process) as popen,
+                        mock.patch.object(CONTRACT.subprocess, "run") as probe,
+                        mock.patch.object(CONTRACT.socket, "socket", side_effect=released),
+                        mock.patch("builtins.print", side_effect=print_failures),
+                    ):
+                        with self.assertRaises(error_type) as raised:
+                            CONTRACT.check_runtime("mock-weir", directory)
+                    self.assertIs(raised.exception, failure)
+                    popen.assert_called_once()
+                    probe.assert_not_called()
+                    application.close.assert_called_once_with()
+                    diagnostics.close.assert_called_once_with()
+                    process.terminate.assert_called_once_with()
+                    process.wait.assert_called_once_with(timeout=10)
+                    process.kill.assert_not_called()
+                    for listener, port in zip(released, (18001, 18002)):
+                        address = ("127.0.0.1", port)
+                        listener.bind.assert_called_once_with(address)
+                        listener.__exit__.assert_called_once()
 
     def test_candidate_identity_matches_verified_distribution(self):
         # Run 39305424091, artifact 12212914601: independently verified source/index pair.
