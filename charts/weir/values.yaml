@@ -7,7 +7,7 @@ fullnameOverride: ""
 clusterDomain: cluster.local
 image:
   repository: ghcr.io/batchstream/weir
-  digest: sha256:fccec4a18dadc93d6dc47347f2dcd11bed7673cb4e30cf8a862194341db22077
+  digest: sha256:c3713f8754519489cc8021ced8579ef9af95ead4789550ffd2243b17e4def544
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 # Backends and credentials are provisioned separately.

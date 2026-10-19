@@ -81,6 +81,20 @@ def reserve_port():
     return listener
 
 
+def isolate_runtime(resources, app_port, diagnostic_port):
+    config = next(item for item in resources if item["kind"] == "ConfigMap")
+    node = yaml.safe_load(config["data"]["node.yaml"])
+    routes = yaml.safe_load(config["data"]["routes.yaml"])
+    if (routes["stores"] or node["listeners"] != {"application": "[::]:" + str(app_port)}
+            or node["discovery"].get("seeds") or node["discovery"].get("peer_address_env")
+            or node["diagnostics"]["address"] != "127.0.0.1:" + str(diagnostic_port)):
+        raise RuntimeError("runtime fixture must have no Stores or peers and loopback diagnostics")
+    # Static checks cover the generated wildcard listener. Never expose the live
+    # no-Store fixture outside loopback, even on a developer's network.
+    node["listeners"]["application"] = "127.0.0.1:" + str(app_port)
+    config["data"]["node.yaml"] = yaml.safe_dump(node)
+
+
 def check_runtime(binary, directory):
     # Keep both reservations open until immediately before startup.
     application = reserve_port()
@@ -90,12 +104,18 @@ def check_runtime(binary, directory):
     values = {"mesh": {"enabled": False}, "service": {"port": app_port},
               "diagnosticsPort": diagnostic_port, "probeTimeoutMilliseconds": 1250}
     resources = render(values)
+    validate_config(binary, resources, directory)
+    if values["mesh"]["enabled"]:
+        raise RuntimeError("runtime fixture must disable the Mesh")
+    isolate_runtime(resources, app_port, diagnostic_port)
     container, args, environment = validate_config(binary, resources, directory)
     application.close()
     diagnostics.close()
     with tempfile.TemporaryFile(mode="w+") as output:
         process = subprocess.Popen([binary, *args], env=environment, stdout=output, stderr=output)
         try:
+            print("Isolated no-Store runtime PID " + str(process.pid) + ", loopback ports "
+                  + str(app_port) + "/" + str(diagnostic_port), flush=True)
             deadline = time.monotonic() + 10
             while True:
                 command = [binary, *container["startupProbe"]["exec"]["command"][1:]]
@@ -118,6 +138,12 @@ def check_runtime(binary, directory):
                 process.kill()
                 process.wait(timeout=3)
                 raise RuntimeError("Weir did not drain after SIGTERM")
+            for port in (app_port, diagnostic_port):
+                with socket.socket() as listener:
+                    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    listener.bind(("127.0.0.1", port))
+            print("Isolated runtime PID " + str(process.pid) + " exited " + str(exit_code), flush=True)
+            print("Isolated runtime loopback ports released: " + str(app_port) + "/" + str(diagnostic_port), flush=True)
         if exit_code != 0:
             output.seek(0)
             raise RuntimeError("Weir shutdown failed: " + output.read())
