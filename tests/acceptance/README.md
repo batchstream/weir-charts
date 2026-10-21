@@ -1,4 +1,140 @@
-# Persistent acceptance runs
+# Acceptance entries
+
+## Current single-node owned EKS functional run
+
+`functional-owned.py` is a separate, finite external-host orchestrator for the
+companion `cmd/weir-accept` contract. It does not reuse or relax the historical
+24-hour soak/Prometheus gates below. It prepares offline by default. **Do not add
+`--execute` until this change has passed review/CI and execution is authorized.**
+It advances no production Chart version, source annotation or image default.
+
+Use the cached Python environment containing this repository's pinned PyYAML and
+an existing Helm executable. Supply one explicit regular JSON configuration:
+
+```json
+{
+  "server_source": "REPLACE_FULL_CANDIDATE_SOURCE",
+  "candidate": {
+    "image": "ghcr.io/batchstream/weir@sha256:REPLACE_INDEX",
+    "platform_digest": "sha256:REPLACE_ARM64_MANIFEST"
+  },
+  "distribution_bundle": "/absolute/path/verified-release.zip",
+  "distribution_sha256": "REPLACE_TRUSTED_ZIP_SHA256",
+  "runner_binary": "/absolute/path/weir-accept-linux-arm64",
+  "runner_sha256": "REPLACE_BINARY_SHA256",
+  "runner_source": "REPLACE_FULL_COMPANION_SOURCE",
+  "runner_build": "/absolute/path/runner-build.json",
+  "runner_build_sha256": "REPLACE_TRUSTED_BUILD_RECEIPT_SHA256",
+  "mongo": {
+    "image": "mongo@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c",
+    "index": "/absolute/path/mongo-index.json",
+    "manifest": "/absolute/path/mongo-arm64-manifest.json",
+    "config": "/absolute/path/mongo-arm64-config.json"
+  },
+  "search": {
+    "image": "docker.elastic.co/elasticsearch/elasticsearch@sha256:e98f9c3b09beb2fbb9eaf667d602df3f0e00bd3644138b8458dc17ba1a675595",
+    "index": "/absolute/path/search-index.json",
+    "manifest": "/absolute/path/search-arm64-manifest.json",
+    "config": "/absolute/path/search-arm64-config.json"
+  },
+  "carrier": {
+    "image": "docker.elastic.co/elasticsearch/elasticsearch@sha256:e98f9c3b09beb2fbb9eaf667d602df3f0e00bd3644138b8458dc17ba1a675595",
+    "index": "/absolute/path/search-index.json",
+    "manifest": "/absolute/path/search-arm64-manifest.json",
+    "config": "/absolute/path/search-arm64-config.json"
+  }
+}
+```
+
+All image proof files are **exact registry response bytes**, not reserialized JSON.
+The helper hashes the index against its pinned image reference, resolves exactly
+one Linux ARM64 descriptor, checks the manifest and config hashes, and checks the
+config architecture/OS. Search and carrier deliberately reuse the same proof
+files and existing pinned Elasticsearch 8.19.22 image. The carrier overrides the
+image entrypoint with `/bin/bash`; it never starts Java/Elasticsearch. Its required
+stock tools are bash, seq, sleep, cat, chmod, uname and sha256sum. The binary hash,
+build-only invocation and `uname -m` are checked in that actual Pod before the
+functional ready marker. Missing tools or an unexpected image ID fail closed.
+Mongo uses the existing pinned 8.0.32 fixture and a new single-member replica set;
+this is not replica-set failover qualification.
+
+The distribution ZIP is retained provenance, not a registry signature check: its
+SHA256 must come from the independently verified delivery. The helper validates
+all ZIP member checksums, matching delivery/receipt source, index, ARM manifest,
+ARM binary hash and archive receipts without extracting or executing members.
+The host separately verifies actual Kubernetes container image IDs against the
+selected platform manifests. No registry access/download occurs in preparation.
+The runner's independently retained `runner-build.json` must contain
+`source_revision`, `target: "linux/arm64"`, `sha256` and `source_tree_sha256`.
+Its explicit trusted checksum binds that receipt to the binary/source inputs.
+It is not a claim that the helper rebuilt the source. A frozen `-buildvcs=false`
+runner may report `vcs_revision: "unknown"` only with this matching receipt;
+unknown VCS remains unknown, separate from its injected source assertion. When
+runtime VCS metadata is present, the source must match and the tree must be clean.
+The runner must report linked SDK/protocol versions and actual Linux ARM target.
+
+```sh
+# No Kubernetes contact, resource creation or image pull:
+"$PYTHON" -I tests/acceptance/functional-owned.py input.json .testdata/functional-preview
+
+# Later, explicitly authorized execution; use a NEW destination/run:
+"$PYTHON" -I tests/acceptance/functional-owned.py input.json .testdata/functional-run --execute
+```
+
+Preparation validates local evidence, creates a random owner and unique namespace
+name, and runs the actual Chart through `helm template` with owned candidate
+values. Generated files belong under ignored `.testdata/`, never in Git commits.
+There is no arbitrary command/runner option. The fixed functional invocation is
+`/work/program -input /work/config.json`; stdout is the actual JSON report.
+
+Execution is fixed to
+`arn:aws:eks:us-west-1:956540890581:cluster/data-team`. A checkout-local nonblocking
+lock serializes these runs. Immediately before namespace creation, read-only
+preflight checks current context, ready/untainted native ARM nodes, existing Pod
+requests (conservatively including init containers/overhead), node usage and Pod
+slots. One node must have the **entire** 4 CPU / 6 GiB / 10 Pod initial quota free
+against both requests and usage; every created Pod is then pinned to its hostname
+plus `type: sts-arm` and `kubernetes.io/arch: arm64`. This is not a distributed
+reservation: other cluster users can consume headroom, so execution remains
+single-operator and never changes nodes, autoscaling or shared network settings.
+
+A new namespace is created, never adopted; its actual UID and owner label gate
+all subsequent operations. Owned ResourceQuota/LimitRange enforce the initial
+budget. The four Pods have matching requests/limits: Weir 1 CPU/1 GiB,
+Mongo 500m/1 GiB, Search 1 CPU/1536 MiB, runner 250m/256 MiB (total 2.75 CPU/
+3840 MiB). Fixture data volumes are 2 GiB each, runner handoff is 128 MiB, and
+helper tmp volumes are 64 MiB each. All are bounded `emptyDir`; no PVC/PV,
+Role/RoleBinding, in-cluster API client/token, CRD, LoadBalancer, NodePort or
+public port is used. The Job is nonretrying with a 660-second deadline, a finite
+300-second upload gate and a finite export hold. Dependencies become ready and
+Mongo primary initialization completes before Weir, then the runner, are created.
+The host uploads exclusive regular binary/config files into **that same runner
+Pod**, not into separate supposedly shared `emptyDir`s.
+
+Only the newly rendered owned Chart has NetworkPolicy disabled. No existing
+policy is edited or enforcement assumed: **a namespace is not network isolation**.
+The owned services/replica discovery addresses are constructed from that namespace;
+there is no existing database/Secret/credential reuse or TLS qualification claim.
+
+Before and after functional work, the host verifies the actual namespace UID,
+all four Pod/container UIDs/IDs, approved node, readiness, zero restarts and exact
+platform image IDs. The runner receives the actual Weir Pod UID and namespace
+UID in its 15-field input. Exit zero is insufficient: the host requires schema 1,
+functional mode, matching identity/build, the exact complete set of per-backend
+checks, no unknown mutations, and both actual `cleanup_verified` checks.
+Missing/duplicate checks and a build-only report cannot pass. Reports, stderr,
+controlled logs, Pod/image identities and headroom evidence are exported before
+cleanup. Namespace deletion rechecks owner/UID and uses a Kubernetes **UID
+precondition**, then verifies deletion. `functional-result.json` is emitted only
+after both functional validation and namespace deletion succeed. Any failure
+remains failure, even if its owned namespace was cleaned up. A lost create response,
+process kill, or blocked deletion may require operator remediation using the
+recorded owner/UID; never delete a replacement namespace by name alone.
+
+This is one-node plaintext **functional** evidence only: not HA, node loss,
+Mongo failover, 24-hour soak, formal/TLS qualification or server-ledger evidence.
+
+## Historical persistent acceptance runs
 
 The recorded run examples and SDK soak layout belong to the historical v0.1.x
 qualification. Before using them for the current Chart, qualify a current SDK/server
