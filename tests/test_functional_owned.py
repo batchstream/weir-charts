@@ -418,13 +418,63 @@ class FunctionalOwnedTest(unittest.TestCase):
                 ENTRY.upload_runner(options)
         self.assertEqual(cluster.exec.call_count, 1)
         self.assertEqual(cluster.exec.call_args.args[0]['timeout'], 120)
-        metadata = json.loads((self.directory / 'handoff-timeout.json').read_text())
+        metadata = json.loads((self.directory / 'handoff-failure.json').read_text())
+        self.assertEqual(metadata['failure_kind'], 'process_timeout')
+        self.assertEqual(metadata['timeout_classification'], 'confirmed')
+        self.assertIsNone(metadata['returncode'])
         self.assertEqual(metadata['input_length'], len(payload))
         self.assertEqual(metadata['actual_transferred_bytes'], 'unknown')
         self.assertEqual(len(metadata['stdout']), 4096)
         self.assertEqual(len(metadata['stderr']), 4096)
         self.assertNotIn(payload.decode(), json.dumps(metadata))
         self.assertNotIn('command not serialized', json.dumps(metadata))
+
+    def test_nonzero_upload_retains_failure_without_claiming_timeout_or_retrying(self):
+        binary = self.directory / 'runner'
+        payload = b'input bytes excluded from failure evidence'
+        binary.write_bytes(payload)
+        cfg = {'runner_binary': str(binary), 'runner_sha256': hashlib.sha256(payload).hexdigest()}
+        error = ENTRY.subprocess.CalledProcessError(17, 'command excluded', output=b'o' * 5000, stderr=b'failure' * 1000)
+        cluster = mock.Mock()
+        cluster.exec.side_effect = error
+        runner_input = {}
+        options = {'cluster': cluster, 'pod': 'runner', 'cfg': cfg, 'input': runner_input,
+                   'handoff_deadline': 255, 'destination': self.directory}
+        with mock.patch.object(ENTRY.time, 'monotonic', return_value=10):
+            with self.assertRaises(ENTRY.subprocess.CalledProcessError) as caught:
+                ENTRY.upload_runner(options)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(cluster.exec.call_count, 1)
+        metadata = json.loads((self.directory / 'handoff-failure.json').read_text())
+        self.assertEqual(metadata['failure_kind'], 'command_failure')
+        self.assertEqual(metadata['timeout_classification'], 'unknown')
+        self.assertEqual(metadata['returncode'], 17)
+        self.assertEqual(metadata['input_length'], len(payload))
+        self.assertEqual(metadata['actual_transferred_bytes'], 'unknown')
+        self.assertEqual(len(metadata['stdout']), 4096)
+        self.assertEqual(len(metadata['stderr']), 4096)
+        self.assertNotIn(payload.decode(), json.dumps(metadata))
+        self.assertNotIn('command excluded', json.dumps(metadata))
+
+    def test_ready_publication_timeout_uses_same_bounded_handoff_evidence(self):
+        cluster = mock.Mock()
+        error = ENTRY.subprocess.TimeoutExpired('ready argv excluded', 4, output=b'o' * 5000, stderr=b'e' * 5000)
+        cluster.exec.side_effect = error
+        options = {'pod': 'runner', 'argv': ['/bin/bash', '-c', 'set -euC; : > /work/ready'],
+                   'handoff_deadline': 14, 'destination': self.directory}
+        with mock.patch.object(ENTRY.time, 'monotonic', return_value=10):
+            with self.assertRaises(ENTRY.subprocess.TimeoutExpired) as caught:
+                ENTRY.handoff_exec(cluster, options)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(cluster.exec.call_count, 1)
+        self.assertEqual(cluster.exec.call_args.args[0]['timeout'], 4)
+        metadata = json.loads((self.directory / 'handoff-failure.json').read_text())
+        self.assertEqual(metadata['failure_kind'], 'process_timeout')
+        self.assertEqual(metadata['timeout_classification'], 'confirmed')
+        self.assertEqual(metadata['input_length'], 0)
+        self.assertEqual(len(metadata['stdout']), 4096)
+        self.assertEqual(len(metadata['stderr']), 4096)
+        self.assertNotIn('ready argv excluded', json.dumps(metadata))
 
     def test_execution_pins_actual_hostname_not_node_api_name(self):
         items = ENTRY.documents(self.options)

@@ -465,29 +465,39 @@ def write_json(path, value):
         output.write('\n')
 
 
+def handoff_exec(cluster, options):
+    started = time.monotonic()
+    deadline = options['handoff_deadline']
+    require(started < deadline, 'runner handoff deadline exceeded')
+    options['timeout'] = min(options.get('timeout', 45), deadline - started)
+    try:
+        raw = cluster.exec(options)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+        destination = options.get('destination')
+        if destination is not None:
+            def bounded(value):
+                if isinstance(value, bytes):
+                    return value[:4096].decode(errors='replace')
+                return (value or '')[:4096]
+            timeout = isinstance(error, subprocess.TimeoutExpired)
+            failure = {'failure_kind': 'process_timeout' if timeout else 'command_failure',
+                       'timeout_classification': 'confirmed' if timeout else 'unknown',
+                       'returncode': None if timeout else error.returncode,
+                       'elapsed_seconds': time.monotonic() - started,
+                       'input_length': len(options.get('input', b'')), 'actual_transferred_bytes': 'unknown',
+                       'stdout': bounded(error.stdout), 'stderr': bounded(error.stderr)}
+            write_json(destination / 'handoff-failure.json', failure)
+        raise
+    require(time.monotonic() < deadline, 'runner handoff deadline exceeded')
+    return raw
+
+
 def upload_runner(options):
     cluster, pod, cfg = options['cluster'], options['pod'], options['cfg']
-    deadline = options['handoff_deadline']
     def handoff(opts):
-        started = time.monotonic()
-        require(started < deadline, 'runner handoff deadline exceeded')
-        opts['handoff_deadline'] = deadline
-        opts['timeout'] = min(opts.get('timeout', 45), deadline - started)
-        try:
-            raw = cluster.exec(opts)
-        except subprocess.TimeoutExpired as error:
-            destination = options.get('destination')
-            if destination is not None:
-                def bounded(value):
-                    if isinstance(value, bytes):
-                        return value[:4096].decode(errors='replace')
-                    return (value or '')[:4096]
-                failure = {'elapsed_seconds': time.monotonic() - started,
-                           'input_length': len(opts.get('input', b'')), 'actual_transferred_bytes': 'unknown',
-                           'stdout': bounded(error.stdout), 'stderr': bounded(error.stderr)}
-                write_json(destination / 'handoff-timeout.json', failure)
-            raise
-        require(time.monotonic() < deadline, 'runner handoff deadline exceeded')
+        opts['handoff_deadline'] = options['handoff_deadline']
+        opts['destination'] = options.get('destination')
+        raw = handoff_exec(cluster, opts)
         return raw
     # Verify the bytes actually uploaded, not a previous read of this local path.
     for name, raw in (('program', regular(cfg['runner_binary']).read_bytes()),
@@ -568,8 +578,8 @@ def execute(options):
         observation['baseline'] = baseline
         observe(observation)
         opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'set -euC; : > /work/ready'],
-                'handoff_deadline': handoff_deadline}
-        cluster.exec(opts)
+                'handoff_deadline': handoff_deadline, 'destination': destination}
+        handoff_exec(cluster, opts)
         deadline = time.monotonic() + 150
         while True:
             opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'if test -f /work/exit.txt; then cat /work/exit.txt; fi']}
