@@ -70,7 +70,10 @@ Some runtimes instead report the pinned index in `status.imageID` (observed with
 Mongo) and the resolved config digest in `status.image`. That path is accepted
 only when the **exact known index and independently verified ARM config digest**
 both match the retained index → ARM manifest → config chain, and `spec.image`
-is the exact selected immutable reference. An index ID alone never proves platform;
+is that exact verified **index-pinned** reference, not a different platform pin.
+The Weir candidate stays manifest-only: retained delivery validation returns only
+its validated image, platform digest and source, never caller-supplied extras or
+config digests. An index ID alone never proves platform;
 wrong/missing config, a different index or an unpinned Pod image fails closed.
 Native approved placement is still required, and the selected/runtime image fields
 are frozen in the before/after identity comparison. No registry access/download

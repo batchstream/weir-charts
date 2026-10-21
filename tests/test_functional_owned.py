@@ -286,6 +286,27 @@ class FunctionalOwnedTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             ENTRY.candidate_proof(cfg)
 
+    def test_candidate_remains_manifest_only_even_with_caller_supplied_config_digest(self):
+        cfg = self.distribution()
+        caller_config = 'sha256:' + 'f' * 64
+        cfg['candidate']['config_digest'] = caller_config
+        cfg['candidate']['source'] = 'caller-controlled'
+        proof = ENTRY.candidate_proof(cfg)
+        self.assertEqual(set(proof), {'image', 'platform_digest', 'source'})
+        self.assertEqual(proof['source'], cfg['server_source'])
+        selected = proof['image'].split('@')[0] + '@' + proof['platform_digest']
+        status = {'imageID': proof['image'], 'image': caller_config}
+        options = {'proof': proof, 'status': status, 'selected_image': selected, 'expected_image': selected}
+        with self.assertRaisesRegex(ValueError, 'deployed platform imageID mismatch'):
+            ENTRY.runtime_image(options)
+        # Defense in depth: even a poisoned proof cannot use index fallback
+        # when the Pod selected a different (platform-manifest) reference.
+        proof['config_digest'] = caller_config
+        with self.assertRaisesRegex(ValueError, 'deployed platform imageID mismatch'):
+            ENTRY.runtime_image(options)
+        status['imageID'] = selected
+        ENTRY.runtime_image(options)
+
     def test_headroom_accounts_for_requests_usage_pods_and_native_node(self):
         node = {'metadata': {'name': 'arm-node', 'uid': 'node-uid',
                              'labels': {'kubernetes.io/arch': 'arm64', 'kubernetes.io/hostname': 'different-arm-hostname'}},

@@ -97,7 +97,8 @@ def candidate_proof(cfg):
             require(checksums.get('weir-first/' + name) == checksum, 'binary archive receipt mismatch')
         require(cfg['candidate']['image'] == 'ghcr.io/batchstream/weir@' + image['oci']['index'] and
                 cfg['candidate']['platform_digest'] == image['oci']['images']['arm64']['manifest'], 'candidate mapping mismatch')
-    result = dict(cfg['candidate'], source=cfg['server_source'])
+    result = {'image': cfg['candidate']['image'], 'platform_digest': cfg['candidate']['platform_digest'],
+              'source': cfg['server_source']}
     return result
 
 
@@ -404,7 +405,8 @@ def runtime_image(options):
     # Some runtimes report the pinned index in imageID and the resolved config
     # in image. Only the independently verified ARM index/manifest/config chain
     # authorizes that pair; an index ID by itself never establishes platform.
-    index_match = (runtime_digest == proof['image'].split('@')[1] and
+    index_match = (options['selected_image'] == proof['image'] and
+                   runtime_digest == proof['image'].split('@')[1] and
                    proof.get('config_digest') is not None and status.get('image') == proof['config_digest'])
     require(manifest_match or index_match, 'deployed platform imageID mismatch')
 
