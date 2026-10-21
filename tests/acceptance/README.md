@@ -126,7 +126,26 @@ public port is used. The Job is nonretrying with a 660-second deadline, a finite
 300-second upload gate and a finite export hold. Dependencies become ready and
 Mongo primary initialization completes before Weir, then the runner, are created.
 The host uploads exclusive regular binary/config files into **that same runner
-Pod**, not into separate supposedly shared `emptyDir`s.
+Pod**, not into separate supposedly shared `emptyDir`s. Binary transfer has an
+explicit maximum 120-second subprocess and kubectl request budget, rather than
+the generic 45-second command limit. All upload/hash/version actions and ready
+publication share a 255-second monotonic deadline anchored **before Job creation**;
+checks occur before and after handoff actions, with the actual exec allowance
+recomputed after namespace ownership verification. The 45-second ownership rail
+is reserved within the unchanged 300-second shell gate. An expired deadline
+cannot be bypassed by an already-present ready file. There are no transfer retries.
+The runner's 120-second business budget, 150-second host completion wait,
+180-second export hold and 660-second Job deadline are unchanged.
+The same bounded evidence wrapper covers upload/hash/version **and ready
+publication**. Python `TimeoutExpired` and nonzero `CalledProcessError` outcomes
+retain elapsed time, intended input length and up to 4096 bytes each of stdout/
+stderr in `handoff-failure.json`; no input bytes or command arguments are
+serialized. `failure_kind: process_timeout` has confirmed timeout classification;
+`failure_kind: command_failure` retains the exit code and timeout classification
+**unknown**. In particular, a kubectl request timeout may exit nonzero before the
+outer Python deadline, but arbitrary nonzero exits are never labeled timeouts.
+Both exceptions are rethrown without retry. Actual bytes transferred remain
+**unknown**, and a timeout alone does not establish slow transfer as its cause.
 
 Only the newly rendered owned Chart has NetworkPolicy disabled. No existing
 policy is edited or enforcement assumed: **a namespace is not network isolation**.

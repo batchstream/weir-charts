@@ -362,7 +362,8 @@ class FunctionalOwnedTest(unittest.TestCase):
             return b'aarch64\n'
         cluster.exec.side_effect = remote
         runner_input = {}
-        handoff = {'cluster': cluster, 'pod': 'runner', 'cfg': cfg, 'input': runner_input}
+        handoff = {'cluster': cluster, 'pod': 'runner', 'cfg': cfg, 'input': runner_input,
+                   'handoff_deadline': ENTRY.time.monotonic() + 255}
         # The local file is replaced after the earlier trusted hash was computed.
         binary.write_bytes(b'replaced since initial validation')
         with self.assertRaisesRegex(ValueError, 'uploaded runner checksum mismatch'):
@@ -375,6 +376,105 @@ class FunctionalOwnedTest(unittest.TestCase):
         checksum_index = next(i for i, argv in enumerate(events) if argv[0] == 'sha256sum')
         program_index = next(i for i, argv in enumerate(events) if argv[0] == '/work/program')
         self.assertLess(checksum_index, program_index)
+
+    def test_handoff_exec_caps_both_budgets_after_ownership_and_rejects_expired_ready(self):
+        cluster = ENTRY.Cluster(self.run)
+        opts = {'pod': 'runner', 'argv': ['cat'], 'input': b'binary', 'timeout': 120, 'handoff_deadline': 255}
+        with mock.patch.object(cluster, 'owned'), mock.patch.object(cluster, 'kubectl', return_value=b'ok') as call, mock.patch.object(ENTRY.time, 'monotonic', side_effect=[10, 12, 13]):
+            self.assertEqual(cluster.exec(opts), b'ok')
+            self.assertEqual(call.call_args.kwargs['timeout'], 120)
+            self.assertIn('--request-timeout=120s', call.call_args.args[0])
+        opts['handoff_deadline'] = 20
+        with mock.patch.object(cluster, 'owned'), mock.patch.object(cluster, 'kubectl', return_value=b'ok') as call, mock.patch.object(ENTRY.time, 'monotonic', side_effect=[10, 19.875, 19.9]):
+            self.assertEqual(cluster.exec(opts), b'ok')
+            self.assertEqual(call.call_args.kwargs['timeout'], .125)
+            self.assertIn('--request-timeout=0.125s', call.call_args.args[0])
+        opts['argv'] = ['/bin/bash', '-c', 'test -f /work/ready || : > /work/ready']
+        with mock.patch.object(cluster, 'owned') as owned, mock.patch.object(cluster, 'kubectl') as call, mock.patch.object(ENTRY.time, 'monotonic', return_value=21):
+            with self.assertRaisesRegex(ValueError, 'handoff deadline exceeded'):
+                cluster.exec(opts)
+            owned.assert_not_called()
+            call.assert_not_called()
+        with mock.patch.object(cluster, 'owned'), mock.patch.object(cluster, 'kubectl') as call, mock.patch.object(ENTRY.time, 'monotonic', side_effect=[10, 21]):
+            with self.assertRaisesRegex(ValueError, 'handoff deadline exceeded'):
+                cluster.exec(opts)
+            call.assert_not_called()
+        with mock.patch.object(cluster, 'owned'), mock.patch.object(cluster, 'kubectl', return_value=b'ok'), mock.patch.object(ENTRY.time, 'monotonic', side_effect=[10, 12, 21]):
+            with self.assertRaisesRegex(ValueError, 'handoff deadline exceeded'):
+                cluster.exec(opts)
+
+    def test_handoff_timeout_retains_bounded_failure_metadata_without_payload_or_retry(self):
+        binary = self.directory / 'runner'
+        payload = b'private input payload not to serialize'
+        binary.write_bytes(payload)
+        cfg = {'runner_binary': str(binary), 'runner_sha256': hashlib.sha256(payload).hexdigest()}
+        cluster = mock.Mock()
+        cluster.exec.side_effect = ENTRY.subprocess.TimeoutExpired('command not serialized', 120, output=b'o' * 5000, stderr=b'e' * 5000)
+        runner_input = {}
+        options = {'cluster': cluster, 'pod': 'runner', 'cfg': cfg, 'input': runner_input,
+                   'handoff_deadline': 255, 'destination': self.directory}
+        with mock.patch.object(ENTRY.time, 'monotonic', return_value=10):
+            with self.assertRaises(ENTRY.subprocess.TimeoutExpired):
+                ENTRY.upload_runner(options)
+        self.assertEqual(cluster.exec.call_count, 1)
+        self.assertEqual(cluster.exec.call_args.args[0]['timeout'], 120)
+        metadata = json.loads((self.directory / 'handoff-failure.json').read_text())
+        self.assertEqual(metadata['failure_kind'], 'process_timeout')
+        self.assertEqual(metadata['timeout_classification'], 'confirmed')
+        self.assertIsNone(metadata['returncode'])
+        self.assertEqual(metadata['input_length'], len(payload))
+        self.assertEqual(metadata['actual_transferred_bytes'], 'unknown')
+        self.assertEqual(len(metadata['stdout']), 4096)
+        self.assertEqual(len(metadata['stderr']), 4096)
+        self.assertNotIn(payload.decode(), json.dumps(metadata))
+        self.assertNotIn('command not serialized', json.dumps(metadata))
+
+    def test_nonzero_upload_retains_failure_without_claiming_timeout_or_retrying(self):
+        binary = self.directory / 'runner'
+        payload = b'input bytes excluded from failure evidence'
+        binary.write_bytes(payload)
+        cfg = {'runner_binary': str(binary), 'runner_sha256': hashlib.sha256(payload).hexdigest()}
+        error = ENTRY.subprocess.CalledProcessError(17, 'command excluded', output=b'o' * 5000, stderr=b'failure' * 1000)
+        cluster = mock.Mock()
+        cluster.exec.side_effect = error
+        runner_input = {}
+        options = {'cluster': cluster, 'pod': 'runner', 'cfg': cfg, 'input': runner_input,
+                   'handoff_deadline': 255, 'destination': self.directory}
+        with mock.patch.object(ENTRY.time, 'monotonic', return_value=10):
+            with self.assertRaises(ENTRY.subprocess.CalledProcessError) as caught:
+                ENTRY.upload_runner(options)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(cluster.exec.call_count, 1)
+        metadata = json.loads((self.directory / 'handoff-failure.json').read_text())
+        self.assertEqual(metadata['failure_kind'], 'command_failure')
+        self.assertEqual(metadata['timeout_classification'], 'unknown')
+        self.assertEqual(metadata['returncode'], 17)
+        self.assertEqual(metadata['input_length'], len(payload))
+        self.assertEqual(metadata['actual_transferred_bytes'], 'unknown')
+        self.assertEqual(len(metadata['stdout']), 4096)
+        self.assertEqual(len(metadata['stderr']), 4096)
+        self.assertNotIn(payload.decode(), json.dumps(metadata))
+        self.assertNotIn('command excluded', json.dumps(metadata))
+
+    def test_ready_publication_timeout_uses_same_bounded_handoff_evidence(self):
+        cluster = mock.Mock()
+        error = ENTRY.subprocess.TimeoutExpired('ready argv excluded', 4, output=b'o' * 5000, stderr=b'e' * 5000)
+        cluster.exec.side_effect = error
+        options = {'pod': 'runner', 'argv': ['/bin/bash', '-c', 'set -euC; : > /work/ready'],
+                   'handoff_deadline': 14, 'destination': self.directory}
+        with mock.patch.object(ENTRY.time, 'monotonic', return_value=10):
+            with self.assertRaises(ENTRY.subprocess.TimeoutExpired) as caught:
+                ENTRY.handoff_exec(cluster, options)
+        self.assertIs(caught.exception, error)
+        self.assertEqual(cluster.exec.call_count, 1)
+        self.assertEqual(cluster.exec.call_args.args[0]['timeout'], 4)
+        metadata = json.loads((self.directory / 'handoff-failure.json').read_text())
+        self.assertEqual(metadata['failure_kind'], 'process_timeout')
+        self.assertEqual(metadata['timeout_classification'], 'confirmed')
+        self.assertEqual(metadata['input_length'], 0)
+        self.assertEqual(len(metadata['stdout']), 4096)
+        self.assertEqual(len(metadata['stderr']), 4096)
+        self.assertNotIn('ready argv excluded', json.dumps(metadata))
 
     def test_execution_pins_actual_hostname_not_node_api_name(self):
         items = ENTRY.documents(self.options)

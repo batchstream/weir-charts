@@ -286,7 +286,21 @@ class Cluster:
 
     def exec(self, options):
         args = ['exec', '-i', options['pod'], '--', *options['argv']]
-        return self.scoped(args, input=options.get('input'), timeout=options.get('timeout', 45))
+        deadline = options.get('handoff_deadline')
+        if deadline is None:
+            return self.scoped(args, input=options.get('input'), timeout=options.get('timeout', 45))
+        require(time.monotonic() < deadline, 'runner handoff deadline exceeded')
+        # The 255-second handoff window reserves the full existing 45-second
+        # ownership rail within the shell's unchanged 300-second ready gate.
+        self.owned()
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, 'runner handoff deadline exceeded')
+        budget = min(options.get('timeout', 45), remaining)
+        request_timeout = '--request-timeout=' + str(budget) + 's'
+        raw = self.kubectl([request_timeout, '-n', self.run['namespace'], *args],
+                           input=options.get('input'), timeout=budget)
+        require(time.monotonic() < deadline, 'runner handoff deadline exceeded')
+        return raw
 
     def cleanup(self):
         self.owned()
@@ -451,21 +465,54 @@ def write_json(path, value):
         output.write('\n')
 
 
+def handoff_exec(cluster, options):
+    started = time.monotonic()
+    deadline = options['handoff_deadline']
+    require(started < deadline, 'runner handoff deadline exceeded')
+    options['timeout'] = min(options.get('timeout', 45), deadline - started)
+    try:
+        raw = cluster.exec(options)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as error:
+        destination = options.get('destination')
+        if destination is not None:
+            def bounded(value):
+                if isinstance(value, bytes):
+                    return value[:4096].decode(errors='replace')
+                return (value or '')[:4096]
+            timeout = isinstance(error, subprocess.TimeoutExpired)
+            failure = {'failure_kind': 'process_timeout' if timeout else 'command_failure',
+                       'timeout_classification': 'confirmed' if timeout else 'unknown',
+                       'returncode': None if timeout else error.returncode,
+                       'elapsed_seconds': time.monotonic() - started,
+                       'input_length': len(options.get('input', b'')), 'actual_transferred_bytes': 'unknown',
+                       'stdout': bounded(error.stdout), 'stderr': bounded(error.stderr)}
+            write_json(destination / 'handoff-failure.json', failure)
+        raise
+    require(time.monotonic() < deadline, 'runner handoff deadline exceeded')
+    return raw
+
+
 def upload_runner(options):
     cluster, pod, cfg = options['cluster'], options['pod'], options['cfg']
+    def handoff(opts):
+        opts['handoff_deadline'] = options['handoff_deadline']
+        opts['destination'] = options.get('destination')
+        raw = handoff_exec(cluster, opts)
+        return raw
     # Verify the bytes actually uploaded, not a previous read of this local path.
     for name, raw in (('program', regular(cfg['runner_binary']).read_bytes()),
                       ('config.json', json.dumps(options['input']).encode())):
-        opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'set -euC; umask 077; cat > /work/' + name], 'input': raw}
-        cluster.exec(opts)
+        opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'set -euC; umask 077; cat > /work/' + name], 'input': raw,
+                'timeout': 120 if name == 'program' else 45}
+        handoff(opts)
     opts = {'pod': pod, 'argv': ['sha256sum', '/work/program']}
-    checksum = cluster.exec(opts).decode().split()
+    checksum = handoff(opts).decode().split()
     require(checksum == [cfg['runner_sha256'], '/work/program'], 'uploaded runner checksum mismatch')
     opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'chmod 700 /work/program; uname -m']}
-    require(cluster.exec(opts).decode().strip() == 'aarch64', 'carrier kernel architecture mismatch')
+    require(handoff(opts).decode().strip() == 'aarch64', 'carrier kernel architecture mismatch')
     # No invocation of the uploaded program, even -version, precedes its hash gate.
     opts = {'pod': pod, 'argv': ['/work/program', '-version']}
-    build_raw = cluster.exec(opts)
+    build_raw = handoff(opts)
     return build_raw
 
 
@@ -496,6 +543,7 @@ def execute(options):
         for item in options['chart']:
             cluster.create(item)
         cluster.scoped(['wait', '--for=condition=Available', 'deployment/weir', '--timeout=180s'], timeout=190)
+        handoff_deadline = time.monotonic() + 255
         for item in options['items']:
             if item['kind'] == 'Job':
                 cluster.create(item)
@@ -518,7 +566,8 @@ def execute(options):
         runner_input = input_config(identity_options)
         write_json(destination / 'runner-input.json', runner_input)
         pod = baseline['runner']['name']
-        handoff = {'cluster': cluster, 'pod': pod, 'cfg': cfg, 'input': runner_input}
+        handoff = {'cluster': cluster, 'pod': pod, 'cfg': cfg, 'input': runner_input,
+                   'handoff_deadline': handoff_deadline, 'destination': destination}
         build_raw = upload_runner(handoff)
         require(len(build_raw) <= 65536, 'runner build report oversized')
         build_report = json.loads(build_raw)
@@ -528,8 +577,9 @@ def execute(options):
         # Recheck every actual identity immediately before starting business work.
         observation['baseline'] = baseline
         observe(observation)
-        opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'set -euC; : > /work/ready']}
-        cluster.exec(opts)
+        opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'set -euC; : > /work/ready'],
+                'handoff_deadline': handoff_deadline, 'destination': destination}
+        handoff_exec(cluster, opts)
         deadline = time.monotonic() + 150
         while True:
             opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'if test -f /work/exit.txt; then cat /work/exit.txt; fi']}
