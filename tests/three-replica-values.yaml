@@ -33,14 +33,14 @@ networkPolicy:
   egress:
   - to:
     - ipBlock:
-        cidr: 192.168.65.254/32
+        cidr: 10.0.0.10/32
     ports:
     - protocol: TCP
-      port: 27029
+      port: 27017
 mesh:
-  name: local-chart
+  name: three-replica
 stores:
 - name: mongo
   backend:
     mongodb:
-      uri: mongodb://192.168.65.254:27029/?directConnection=true&serverMonitoringMode=poll
+      uri: mongodb://10.0.0.10:27017/?directConnection=true

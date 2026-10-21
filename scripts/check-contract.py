@@ -159,7 +159,7 @@ def main():
     binary = str(Path(binary).resolve())
     fixtures = [("weir", yaml.safe_load((ROOT / "examples/mongo.yaml").read_text())),
                 ("search", yaml.safe_load((ROOT / "examples/search.yaml").read_text())),
-                ("weir", yaml.safe_load((ROOT / "tests/acceptance/local-kind/values.yaml").read_text()))]
+                ("weir", yaml.safe_load((ROOT / "tests/three-replica-values.yaml").read_text()))]
     with tempfile.TemporaryDirectory(prefix="weir-chart-contract-") as temporary:
         directory = Path(temporary)
         for release, values in fixtures:

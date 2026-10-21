@@ -1,8 +1,0 @@
-# Merge over the owned acceptance values; existing annotation keys are retained.
-# The existing Prometheus pod-discovery job honors these annotations.
-podAnnotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/port: "7449"
-  prometheus.io/path: /metrics
-# Existing metrics.enabled and restricted ingress
-# must already permit the existing scraper. This overlay changes no shared config.
