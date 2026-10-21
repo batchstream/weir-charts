@@ -314,6 +314,9 @@ def headroom(cluster):
     eligible = []
     for node in nodes:
         name = node['metadata']['name']
+        hostname = node['metadata']['labels'].get('kubernetes.io/hostname')
+        if not hostname:
+            continue
         if node['metadata']['labels'].get('kubernetes.io/arch') != 'arm64' or node['spec'].get('unschedulable'):
             continue
         if any(t.get('effect') in ('NoSchedule', 'NoExecute') for t in node['spec'].get('taints', [])):
@@ -336,7 +339,7 @@ def headroom(cluster):
         enough = all(quantity(allocatable[key], key) - max(allocated[key], quantity(used[name].get(key, '0'), key)) >= wanted
                      for key, wanted in (('cpu', 4), ('memory', 6 * 1024 ** 3)))
         if enough and int(allocatable['pods']) - allocated['pods'] >= 10:
-            record = {'node': name, 'uid': node['metadata']['uid'], 'allocatable': allocatable,
+            record = {'node': name, 'hostname': hostname, 'uid': node['metadata']['uid'], 'allocatable': allocatable,
                       'requested': allocated, 'usage': used[name]}
             eligible.append(record)
     require(eligible, 'no single native ARM node has initial full-quota headroom')
@@ -423,6 +426,24 @@ def write_json(path, value):
         output.write('\n')
 
 
+def upload_runner(options):
+    cluster, pod, cfg = options['cluster'], options['pod'], options['cfg']
+    # Verify the bytes actually uploaded, not a previous read of this local path.
+    for name, raw in (('program', regular(cfg['runner_binary']).read_bytes()),
+                      ('config.json', json.dumps(options['input']).encode())):
+        opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'set -euC; umask 077; cat > /work/' + name], 'input': raw}
+        cluster.exec(opts)
+    opts = {'pod': pod, 'argv': ['sha256sum', '/work/program']}
+    checksum = cluster.exec(opts).decode().split()
+    require(checksum == [cfg['runner_sha256'], '/work/program'], 'uploaded runner checksum mismatch')
+    opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'chmod 700 /work/program; uname -m']}
+    require(cluster.exec(opts).decode().strip() == 'aarch64', 'carrier kernel architecture mismatch')
+    # No invocation of the uploaded program, even -version, precedes its hash gate.
+    opts = {'pod': pod, 'argv': ['/work/program', '-version']}
+    build_raw = cluster.exec(opts)
+    return build_raw
+
+
 def execute(options):
     run, cfg, proofs, destination = options['run'], options['cfg'], options['proofs'], options['destination']
     cluster = Cluster(run)
@@ -436,11 +457,11 @@ def execute(options):
         write_json(destination / 'namespace.json', created)
         for item in options['items']:
             if item['kind'] == 'Job':
-                item['spec']['template']['spec']['nodeSelector']['kubernetes.io/hostname'] = checked['node']
+                item['spec']['template']['spec']['nodeSelector']['kubernetes.io/hostname'] = checked['hostname']
             elif item['kind'] == 'Pod':
-                item['spec']['nodeSelector']['kubernetes.io/hostname'] = checked['node']
+                item['spec']['nodeSelector']['kubernetes.io/hostname'] = checked['hostname']
             elif item['kind'] == 'Deployment':
-                item['spec']['template']['spec']['nodeSelector']['kubernetes.io/hostname'] = checked['node']
+                item['spec']['template']['spec']['nodeSelector']['kubernetes.io/hostname'] = checked['hostname']
             if item not in options['chart'] and item['kind'] != 'Job':
                 cluster.create(item)
         cluster.scoped(['wait', '--for=condition=Ready', 'pod/mongo', 'pod/search', '--timeout=180s'], timeout=190)
@@ -472,15 +493,8 @@ def execute(options):
         runner_input = input_config(identity_options)
         write_json(destination / 'runner-input.json', runner_input)
         pod = baseline['runner']['name']
-        # Fixed filenames, exclusive regular files, one actual Pod/emptyDir handoff.
-        for name, raw in (('program', regular(cfg['runner_binary']).read_bytes()), ('config.json', json.dumps(runner_input).encode())):
-            opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'set -euC; umask 077; cat > /work/' + name], 'input': raw}
-            cluster.exec(opts)
-        opts = {'pod': pod, 'argv': ['/bin/bash', '-c', 'chmod 700 /work/program; uname -m']}
-        require(cluster.exec(opts).decode().strip() == 'aarch64', 'carrier kernel architecture mismatch')
-        # Runner source/version check occurs before the functional ready marker.
-        opts = {'pod': pod, 'argv': ['/work/program', '-version']}
-        build_raw = cluster.exec(opts)
+        handoff = {'cluster': cluster, 'pod': pod, 'cfg': cfg, 'input': runner_input}
+        build_raw = upload_runner(handoff)
         require(len(build_raw) <= 65536, 'runner build report oversized')
         build_report = json.loads(build_raw)
         require(build_report.get('mode') == 'build' and build_report.get('passed') is True, 'runner build preflight failed')

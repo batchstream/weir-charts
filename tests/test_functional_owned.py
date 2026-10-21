@@ -240,7 +240,8 @@ class FunctionalOwnedTest(unittest.TestCase):
             ENTRY.candidate_proof(cfg)
 
     def test_headroom_accounts_for_requests_usage_pods_and_native_node(self):
-        node = {'metadata': {'name': 'arm-node', 'uid': 'node-uid', 'labels': {'kubernetes.io/arch': 'arm64'}},
+        node = {'metadata': {'name': 'arm-node', 'uid': 'node-uid',
+                             'labels': {'kubernetes.io/arch': 'arm64', 'kubernetes.io/hostname': 'different-arm-hostname'}},
                 'spec': {}, 'status': {'conditions': [{'type': 'Ready', 'status': 'True'}],
                                       'allocatable': {'cpu': '8', 'memory': '16Gi', 'pods': '58'}}}
         pod = {'spec': {'nodeName': 'arm-node', 'containers': [{'resources': {'requests': {'cpu': '1', 'memory': '1Gi'}}}]}}
@@ -253,7 +254,16 @@ class FunctionalOwnedTest(unittest.TestCase):
             result = ENTRY.CONTEXT.encode() if args[0] == 'config' else json.dumps(metrics).encode()
             return result
         with mock.patch.object(cluster, 'get', side_effect=get), mock.patch.object(cluster, 'kubectl', side_effect=kubectl):
-            self.assertEqual(ENTRY.headroom(cluster)['node'], 'arm-node')
+            checked = ENTRY.headroom(cluster)
+            self.assertEqual(checked['node'], 'arm-node')
+            self.assertEqual(checked['hostname'], 'different-arm-hostname')
+            del node['metadata']['labels']['kubernetes.io/hostname']
+            with self.assertRaises(ValueError):
+                ENTRY.headroom(cluster)
+            node['metadata']['labels']['kubernetes.io/hostname'] = ''
+            with self.assertRaises(ValueError):
+                ENTRY.headroom(cluster)
+            node['metadata']['labels']['kubernetes.io/hostname'] = 'different-arm-hostname'
             metrics['items'][0]['usage']['cpu'] = '7'
             with self.assertRaises(ValueError):
                 ENTRY.headroom(cluster)
@@ -261,6 +271,69 @@ class FunctionalOwnedTest(unittest.TestCase):
             pod['spec']['containers'][0]['resources']['requests']['cpu'] = '7'
             with self.assertRaises(ValueError):
                 ENTRY.headroom(cluster)
+
+    def test_uploaded_checksum_precedes_every_program_invocation_and_rejects_replacement(self):
+        binary = self.directory / 'runner'
+        original = b'original validated runner bytes'
+        binary.write_bytes(original)
+        cfg = {'runner_binary': str(binary), 'runner_sha256': hashlib.sha256(original).hexdigest()}
+        cluster = mock.Mock()
+        uploaded = {}
+        events = []
+        def remote(options):
+            argv = options['argv']
+            events.append(argv)
+            if 'input' in options:
+                uploaded[argv[-1].split('/work/')[-1]] = options['input']
+                return b''
+            if argv[0] == 'sha256sum':
+                checksum = hashlib.sha256(uploaded['program']).hexdigest()
+                return (checksum + '  /work/program\n').encode()
+            if argv[0] == '/work/program':
+                return b'version report'
+            return b'aarch64\n'
+        cluster.exec.side_effect = remote
+        runner_input = {}
+        handoff = {'cluster': cluster, 'pod': 'runner', 'cfg': cfg, 'input': runner_input}
+        # The local file is replaced after the earlier trusted hash was computed.
+        binary.write_bytes(b'replaced since initial validation')
+        with self.assertRaisesRegex(ValueError, 'uploaded runner checksum mismatch'):
+            ENTRY.upload_runner(handoff)
+        self.assertFalse(any(argv[0] == '/work/program' for argv in events))
+        self.assertFalse(any('/work/ready' in ' '.join(argv) for argv in events))
+        binary.write_bytes(original)
+        events.clear()
+        self.assertEqual(ENTRY.upload_runner(handoff), b'version report')
+        checksum_index = next(i for i, argv in enumerate(events) if argv[0] == 'sha256sum')
+        program_index = next(i for i, argv in enumerate(events) if argv[0] == '/work/program')
+        self.assertLess(checksum_index, program_index)
+
+    def test_execution_pins_actual_hostname_not_node_api_name(self):
+        items = ENTRY.documents(self.options)
+        selector = {'type': 'sts-arm', 'kubernetes.io/arch': 'arm64'}
+        deployment = {'kind': 'Deployment', 'spec': {'template': {'spec': {'nodeSelector': selector}}}}
+        items.append(deployment)
+        cluster = mock.Mock()
+        cluster.uid = None
+        created = {'metadata': {'uid': 'owned-namespace-uid'}}
+        cluster.kubectl.return_value = json.dumps(created).encode()
+        listing = {'items': []}
+        cluster.get.return_value = listing
+        cluster.scoped.side_effect = ValueError('stop after selector assignment')
+        checked = {'node': 'api-node-name', 'hostname': 'actual-hostname-label'}
+        options = dict(self.options, items=items, chart=[deployment], destination=self.directory)
+        with mock.patch.object(ENTRY, 'Cluster', return_value=cluster), mock.patch.object(ENTRY, 'headroom', return_value=checked):
+            with self.assertRaisesRegex(ValueError, 'stop after selector assignment'):
+                ENTRY.execute(options)
+        for item in items:
+            if item['kind'] == 'Pod':
+                spec = item['spec']
+            elif item['kind'] in ('Deployment', 'Job'):
+                spec = item['spec']['template']['spec']
+            else:
+                continue
+            self.assertEqual(spec['nodeSelector']['kubernetes.io/hostname'], checked['hostname'])
+            self.assertNotEqual(spec['nodeSelector']['kubernetes.io/hostname'], checked['node'])
 
     def test_existing_regular_file_and_wrong_native_binary_are_rejected(self):
         path = self.directory / 'binary'

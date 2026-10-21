@@ -52,9 +52,11 @@ one Linux ARM64 descriptor, checks the manifest and config hashes, and checks th
 config architecture/OS. Search and carrier deliberately reuse the same proof
 files and existing pinned Elasticsearch 8.19.22 image. The carrier overrides the
 image entrypoint with `/bin/bash`; it never starts Java/Elasticsearch. Its required
-stock tools are bash, seq, sleep, cat, chmod, uname and sha256sum. The binary hash,
-build-only invocation and `uname -m` are checked in that actual Pod before the
-functional ready marker. Missing tools or an unexpected image ID fail closed.
+stock tools are bash, seq, sleep, cat, chmod, uname and sha256sum. The hash of the
+actual uploaded binary is checked in that Pod **before any invocation**, including
+`-version`; a replaced local file cannot bypass the preflight checksum gate.
+The build-only invocation and `uname -m` are checked before the functional ready
+marker. Missing tools or an unexpected image ID fail closed.
 Mongo uses the existing pinned 8.0.32 fixture and a new single-member replica set;
 this is not replica-set failover qualification.
 
@@ -93,8 +95,11 @@ lock serializes these runs. Immediately before namespace creation, read-only
 preflight checks current context, ready/untainted native ARM nodes, existing Pod
 requests (conservatively including init containers/overhead), node usage and Pod
 slots. One node must have the **entire** 4 CPU / 6 GiB / 10 Pod initial quota free
-against both requests and usage; every created Pod is then pinned to its hostname
-plus `type: sts-arm` and `kubernetes.io/arch: arm64`. This is not a distributed
+against both requests and usage; every created Pod is then pinned to its actual
+nonempty `kubernetes.io/hostname` label plus `type: sts-arm` and
+`kubernetes.io/arch: arm64`. Nodes without a hostname label are ineligible. The
+node API name is retained separately for checking actual Pod `spec.nodeName`;
+it need not equal the hostname label. This is not a distributed
 reservation: other cluster users can consume headroom, so execution remains
 single-operator and never changes nodes, autoscaling or shared network settings.
 
