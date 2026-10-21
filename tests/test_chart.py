@@ -491,6 +491,9 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(values["image"]["repository"], "ghcr.io/batchstream/weir")
         self.assertEqual(values["image"]["digest"], digest)
         image = values["image"]["repository"] + "@" + digest
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("https://github.com/batchstream/weir/commit/" + revision, readme)
+        self.assertIn("`" + image + "`", readme)
         # Unlike the general render helper, validate the actual deployable default
         # without tests/values.yaml's deliberately non-deployable image fixture.
         command = ["helm", "template", "weir", str(ROOT / "charts/weir")]
