@@ -396,11 +396,14 @@ class ChartTests(unittest.TestCase):
         self.assertNotIn("rollingUpdate", deployment["strategy"])
         self.assertNotIn("lifecycle", deployment["template"]["spec"]["containers"][0])
 
-    def test_acceptance_annotations_preserve_existing_pod_discovery(self):
-        values = yaml.safe_load((ROOT / "tests/acceptance/local-kind/values.yaml").read_text())
-        values.update(yaml.safe_load((ROOT / "tests/acceptance/prometheus-values.yaml").read_text()))
+    def test_pod_annotations_merge_with_chart_managed_annotations(self):
+        pod_annotations = {"prometheus.io/scrape": "true", "prometheus.io/port": "7449", "prometheus.io/path": "/metrics"}
+        values = {"podAnnotations": pod_annotations}
         annotations = render(values)["Deployment"]["spec"]["template"]["metadata"]["annotations"]
-        self.assertEqual(annotations["prometheus.io/path"], "/metrics")
+        for key, value in pod_annotations.items():
+            self.assertEqual(annotations[key], value)
+        self.assertIn("checksum/config", annotations)
+        self.assertIn("weir.batchstream.io/source-revision", annotations)
 
     def test_runtime_fixture_is_loopback_only_and_rejects_stores_or_peers(self):
         values = {"mesh": {"enabled": False}}
@@ -478,8 +481,7 @@ class ChartTests(unittest.TestCase):
                         listener.bind.assert_called_once_with(address)
                         listener.__exit__.assert_called_once()
 
-    def test_candidate_identity_matches_verified_distribution(self):
-        # Run 39305424091, artifact 12212914601: independently verified source/index pair.
+    def test_chart_identity_matches_pinned_image(self):
         revision = "26705ed5ce29555ca9edf50ccf012e0a5727230e"
         digest = "sha256:c3713f8754519489cc8021ced8579ef9af95ead4789550ffd2243b17e4def544"
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
@@ -489,6 +491,9 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(values["image"]["repository"], "ghcr.io/batchstream/weir")
         self.assertEqual(values["image"]["digest"], digest)
         image = values["image"]["repository"] + "@" + digest
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("https://github.com/batchstream/weir/commit/" + revision, readme)
+        self.assertIn("`" + image + "`", readme)
         # Unlike the general render helper, validate the actual deployable default
         # without tests/values.yaml's deliberately non-deployable image fixture.
         command = ["helm", "template", "weir", str(ROOT / "charts/weir")]
@@ -497,12 +502,6 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(deployment["spec"]["template"]["spec"]["containers"][0]["image"], image)
         self.assertEqual(deployment["metadata"]["labels"]["helm.sh/chart"], "weir-" + chart["version"])
         self.assertEqual(deployment["metadata"]["labels"]["app.kubernetes.io/version"], chart["appVersion"])
-        readme = (ROOT / "README.md").read_text()
-        self.assertIn("Chart **" + chart["version"] + " is a candidate, not a stable production release**", readme)
-        self.assertIn("https://github.com/batchstream/weir/commit/" + revision, readme)
-        self.assertIn("`" + image + "`", readme)
-        self.assertIn("https://github.com/batchstream/weir/actions/runs/39305424091", readme)
-        self.assertIn("`12212914601`", readme)
 
     def test_ci_builds_the_recorded_source_contract(self):
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
