@@ -104,8 +104,12 @@ class FunctionalOwnedTest(unittest.TestCase):
             labels = {ENTRY.OWNER_LABEL: self.run['owner'], 'app': role}
             if role == 'weir':
                 labels['app.kubernetes.io/instance'] = 'functional'
+            image = self.proofs['candidate' if role == 'weir' else role]['image']
+            if role == 'weir':
+                image = image.split('@')[0] + '@' + self.proofs['candidate']['platform_digest']
             pod = {'metadata': {'name': role, 'uid': role + '-uid', 'labels': labels},
-                   'spec': {'nodeName': 'checked-node', 'nodeSelector': {'type': 'sts-arm', 'kubernetes.io/arch': 'arm64'}},
+                   'spec': {'nodeName': 'checked-node', 'nodeSelector': {'type': 'sts-arm', 'kubernetes.io/arch': 'arm64'},
+                            'containers': [{'image': image}]},
                    'status': {'containerStatuses': [{'ready': True, 'restartCount': 0, 'containerID': role,
                                                      'imageID': 'example@sha256:' + 'd' * 64}]}}
             pods.append(pod)
@@ -113,6 +117,10 @@ class FunctionalOwnedTest(unittest.TestCase):
         listing = {'items': pods}
         with mock.patch.object(cluster, 'owned'), mock.patch.object(cluster, 'get', return_value=listing):
             baseline = ENTRY.observe(options)
+            pods[1]['spec']['nodeSelector']['kubernetes.io/arch'] = 'amd64'
+            with self.assertRaisesRegex(ValueError, 'outside checked ARM node'):
+                ENTRY.observe(options)
+            pods[1]['spec']['nodeSelector']['kubernetes.io/arch'] = 'arm64'
             options['baseline'] = baseline
             pods[0]['metadata']['uid'] = 'replacement'
             with self.assertRaises(ValueError):
@@ -121,6 +129,32 @@ class FunctionalOwnedTest(unittest.TestCase):
             pods[0]['status']['containerStatuses'][0]['imageID'] = 'example@sha256:' + 'f' * 64
             with self.assertRaises(ValueError):
                 ENTRY.observe(options)
+
+    def test_real_mongo_runtime_index_requires_verified_arm_config_and_exact_selected_pin(self):
+        index = 'sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c'
+        config = 'sha256:00eb3c882069f9bfb1f36e1fa9ece2b5f0f28448059b3f5d38e815fae14fd16d'
+        manifest = 'sha256:65e9d974435d072874cf08922f26ecdf7d45b54662ce632509750b5c23ba5c5f'
+        proof = {'image': ENTRY.MONGO, 'platform_digest': manifest, 'config_digest': config}
+        status = {'imageID': 'docker.io/library/mongo@' + index, 'image': config}
+        options = {'proof': proof, 'status': status, 'selected_image': ENTRY.MONGO, 'expected_image': ENTRY.MONGO}
+        ENTRY.runtime_image(options)
+        for mutation in ('config', 'index', 'missing_config', 'selected_pin', 'suffix'):
+            with self.subTest(mutation=mutation):
+                bad = copy.deepcopy(options)
+                if mutation == 'config':
+                    bad['status']['image'] = 'sha256:' + 'f' * 64
+                elif mutation == 'index':
+                    bad['status']['imageID'] = 'docker.io/library/mongo@sha256:' + 'f' * 64
+                elif mutation == 'missing_config':
+                    del bad['proof']['config_digest']
+                elif mutation == 'selected_pin':
+                    bad['selected_image'] = 'mongo:8.0.32'
+                else:
+                    bad['status']['imageID'] += '-suffix'
+                with self.assertRaises(ValueError):
+                    ENTRY.runtime_image(bad)
+        status['imageID'] = 'docker.io/library/mongo@' + manifest
+        ENTRY.runtime_image(options)
 
     def test_fixture_and_runner_pods_have_approved_bounds_no_pvc_or_rbac(self):
         items = ENTRY.documents(self.options)
@@ -204,9 +238,22 @@ class FunctionalOwnedTest(unittest.TestCase):
             (self.directory / name).write_bytes(data)
         proof = {name: str(self.directory / name) for name in ('config', 'manifest', 'index')}
         proof['image'] = 'example/native@' + ENTRY.digest(index_raw)
-        self.assertEqual(ENTRY.image_proof(proof)['platform_digest'], ENTRY.digest(manifest_raw))
+        checked = ENTRY.image_proof(proof)
+        self.assertEqual(checked['platform_digest'], ENTRY.digest(manifest_raw))
+        self.assertEqual(checked['config_digest'], ENTRY.digest(raw))
         (self.directory / 'config').write_text('{"architecture":"amd64","os":"linux"}')
         with self.assertRaises(ValueError):
+            ENTRY.image_proof(proof)
+        # Even a fully hash-linked chain cannot authorize a non-ARM config.
+        raw = (self.directory / 'config').read_bytes()
+        manifest['config']['digest'] = ENTRY.digest(raw)
+        manifest_raw = json.dumps(manifest).encode()
+        index['manifests'][0]['digest'] = ENTRY.digest(manifest_raw)
+        index_raw = json.dumps(index).encode()
+        (self.directory / 'manifest').write_bytes(manifest_raw)
+        (self.directory / 'index').write_bytes(index_raw)
+        proof['image'] = 'example/native@' + ENTRY.digest(index_raw)
+        with self.assertRaisesRegex(ValueError, 'native Linux ARM image required'):
             ENTRY.image_proof(proof)
 
     def distribution(self):

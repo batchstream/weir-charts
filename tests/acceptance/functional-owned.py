@@ -64,7 +64,7 @@ def image_proof(proof):
     require(len(children) == 1 and children[0]['digest'] == digest(manifest_raw), 'unique ARM manifest required')
     require(manifest['config']['digest'] == digest(config_raw), 'OCI config checksum mismatch')
     require(config.get('architecture') == 'arm64' and config.get('os') == 'linux', 'native Linux ARM image required')
-    result = {'image': proof['image'], 'platform_digest': digest(manifest_raw),
+    result = {'image': proof['image'], 'platform_digest': digest(manifest_raw), 'config_digest': digest(config_raw),
               'source': config.get('config', EMPTY).get('Labels', EMPTY).get('org.opencontainers.image.revision')}
     return result
 
@@ -393,6 +393,22 @@ def validate_report(options):
         require(check.get('passed') is True and check.get('error_code') == code and not check.get('mutation_unknown'), 'failed or unknown check')
 
 
+def runtime_image(options):
+    proof, status = options['proof'], options['status']
+    require(options['selected_image'] == options['expected_image'], 'selected Pod image mismatch')
+    image_id = status.get('imageID', '')
+    match = re.fullmatch(r'(?:[^\s@]+@)?(' + DIGEST + ')', image_id)
+    require(match is not None, 'invalid runtime imageID')
+    runtime_digest = match[1]
+    manifest_match = runtime_digest == proof['platform_digest']
+    # Some runtimes report the pinned index in imageID and the resolved config
+    # in image. Only the independently verified ARM index/manifest/config chain
+    # authorizes that pair; an index ID by itself never establishes platform.
+    index_match = (runtime_digest == proof['image'].split('@')[1] and
+                   proof.get('config_digest') is not None and status.get('image') == proof['config_digest'])
+    require(manifest_match or index_match, 'deployed platform imageID mismatch')
+
+
 def observe(options):
     cluster, proofs = options['cluster'], options['proofs']
     cluster.owned()
@@ -409,10 +425,17 @@ def observe(options):
                 pod['spec'].get('nodeName') == options['node'], 'Pod scheduled outside checked ARM node')
         statuses = pod.get('status', EMPTY).get('containerStatuses', [])
         require(len(statuses) == 1 and statuses[0].get('ready') and statuses[0].get('restartCount') == 0, 'Pod not ready or restarted')
-        image_id = statuses[0].get('imageID', '')
-        require(image_id.endswith('@' + proofs['candidate' if role == 'weir' else role]['platform_digest']) or
-                image_id == proofs['candidate' if role == 'weir' else role]['platform_digest'], 'deployed platform imageID mismatch')
-        records[role] = {'name': pod['metadata']['name'], 'uid': pod['metadata']['uid'], 'image_id': image_id,
+        proof = proofs['candidate' if role == 'weir' else role]
+        selected = pod['spec']['containers']
+        require(len(selected) == 1, 'expected exactly one selected container')
+        expected_image = proof['image']
+        if role == 'weir':
+            expected_image = proof['image'].split('@')[0] + '@' + proof['platform_digest']
+        image_options = {'proof': proof, 'status': statuses[0], 'selected_image': selected[0]['image'],
+                         'expected_image': expected_image}
+        runtime_image(image_options)
+        records[role] = {'name': pod['metadata']['name'], 'uid': pod['metadata']['uid'], 'image_id': statuses[0].get('imageID'),
+                         'runtime_image': statuses[0].get('image'), 'selected_image': selected[0]['image'],
                          'node': pod['spec']['nodeName'], 'container_id': statuses[0].get('containerID')}
     baseline = options.get('baseline')
     if baseline is not None:

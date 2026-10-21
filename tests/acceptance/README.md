@@ -64,8 +64,17 @@ The distribution ZIP is retained provenance, not a registry signature check: its
 SHA256 must come from the independently verified delivery. The helper validates
 all ZIP member checksums, matching delivery/receipt source, index, ARM manifest,
 ARM binary hash and archive receipts without extracting or executing members.
-The host separately verifies actual Kubernetes container image IDs against the
-selected platform manifests. No registry access/download occurs in preparation.
+The host separately verifies the exact selected Pod image and actual Kubernetes
+container image identity. A platform-manifest `status.imageID` remains valid.
+Some runtimes instead report the pinned index in `status.imageID` (observed with
+Mongo) and the resolved config digest in `status.image`. That path is accepted
+only when the **exact known index and independently verified ARM config digest**
+both match the retained index → ARM manifest → config chain, and `spec.image`
+is the exact selected immutable reference. An index ID alone never proves platform;
+wrong/missing config, a different index or an unpinned Pod image fails closed.
+Native approved placement is still required, and the selected/runtime image fields
+are frozen in the before/after identity comparison. No registry access/download
+occurs in preparation.
 The runner's independently retained `runner-build.json` must contain
 `source_revision`, `target: "linux/arm64"`, `sha256` and `source_tree_sha256`.
 Its explicit trusted checksum binds that receipt to the binary/source inputs.
