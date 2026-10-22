@@ -17,8 +17,10 @@ import time
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SCALE_COUNT = 50
+SCALE_STORES = 50
+SCALE_SEEDS = 50
 SCALE_REPLICAS = 100
+SCALE_MIN_REPLICAS = 50
 
 
 def render(values, release="weir"):
@@ -66,13 +68,13 @@ def process_policy():
 def check_scale(binary, directory):
     """Validate a group with many Stores, seeds and replicas."""
     stores = []
-    for index in range(SCALE_COUNT):
+    for index in range(SCALE_STORES):
         backend = {"mongodb": {"uri": "mongodb://127.0.0.1:27017/?directConnection=true"}}
         if index % 2:
             backend = {"search": {"url": "http://127.0.0.1:9200"}}
         store = {"name": "store" + str(index), "backend": backend}
         stores.append(store)
-    seeds = ["peer" + str(index) + ".example:7448" for index in range(SCALE_COUNT)]
+    seeds = ["peer" + str(index) + ".example:7448" for index in range(SCALE_SEEDS)]
     mesh = {"seeds": seeds}
     values = {"stores": stores, "mesh": mesh, "replicaCount": SCALE_REPLICAS}
     resources = render(values)
@@ -81,7 +83,7 @@ def check_scale(binary, directory):
     metadata = {"timezone": "UTC", "start": "0 8 * * *", "end": "0 18 * * *",
                 "desiredReplicas": str(SCALE_REPLICAS)}
     trigger = {"type": "cron", "metadata": metadata}
-    autoscaling = {"enabled": True, "minReplicaCount": SCALE_COUNT, "maxReplicaCount": SCALE_REPLICAS,
+    autoscaling = {"enabled": True, "minReplicaCount": SCALE_MIN_REPLICAS, "maxReplicaCount": SCALE_REPLICAS,
                    "triggers": [trigger]}
     values["autoscaling"] = autoscaling
     scaled = render(values)
@@ -214,8 +216,10 @@ def main():
         resources = render(invalid)
         try:
             validate_config(binary, resources, directory)
-        except subprocess.CalledProcessError:
-            pass
+        except subprocess.CalledProcessError as error:
+            if "memory pressure watermarks" not in error.stderr:
+                raise RuntimeError("invalid process configuration rejected for another reason: "
+                                   + error.stderr) from error
         else:
             raise RuntimeError("invalid process configuration unexpectedly accepted")
         check_scale(binary, directory)

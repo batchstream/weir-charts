@@ -37,6 +37,29 @@ def process_values(stall="30s"):
     return values
 
 
+def strict_object_paths(schema, path=()):
+    """Return the value paths of every schema object that rejects unknown keys."""
+    paths = []
+    if schema.get("additionalProperties") is False:
+        paths.append(path)
+    for name, child in schema.get("properties", {}).items():
+        paths.extend(strict_object_paths(child, path + (name,)))
+    if "items" in schema:
+        paths.extend(strict_object_paths(schema["items"], path + ("[]",)))
+    return paths
+
+
+def nest(path, leaf):
+    """Wrap leaf in the mappings and lists named by a strict object path."""
+    value = leaf
+    for key in reversed(path):
+        if key == "[]":
+            value = [value]
+        else:
+            value = {key: value}
+    return value
+
+
 class ChartTests(unittest.TestCase):
     def test_defaults_protect_one_process_and_generate_configuration(self):
         resources = render()
@@ -220,11 +243,11 @@ class ChartTests(unittest.TestCase):
 
     def test_many_stores_seeds_and_replicas_render(self):
         stores = []
-        for index in range(CONTRACT.SCALE_COUNT):
+        for index in range(CONTRACT.SCALE_STORES):
             backend = {"mongodb": {"uri": "mongodb://127.0.0.1:27017"}}
             store = {"name": "store" + str(index), "backend": backend}
             stores.append(store)
-        seeds = ["peer" + str(index) + ".example:7448" for index in range(CONTRACT.SCALE_COUNT)]
+        seeds = ["peer" + str(index) + ".example:7448" for index in range(CONTRACT.SCALE_SEEDS)]
         mesh = {"seeds": seeds}
         values = {"stores": stores, "mesh": mesh, "replicaCount": CONTRACT.SCALE_REPLICAS}
         resources = render(values)
@@ -236,11 +259,11 @@ class ChartTests(unittest.TestCase):
         metadata = {"timezone": "UTC", "start": "0 8 * * *", "end": "0 18 * * *",
                     "desiredReplicas": str(CONTRACT.SCALE_REPLICAS)}
         trigger = {"type": "cron", "metadata": metadata}
-        autoscaling = {"enabled": True, "minReplicaCount": CONTRACT.SCALE_COUNT,
+        autoscaling = {"enabled": True, "minReplicaCount": CONTRACT.SCALE_MIN_REPLICAS,
                        "maxReplicaCount": CONTRACT.SCALE_REPLICAS, "triggers": [trigger]}
         scaling = {"autoscaling": autoscaling}
         scaled = render(scaling)["ScaledObject"]["spec"]
-        self.assertEqual(scaled["minReplicaCount"], CONTRACT.SCALE_COUNT)
+        self.assertEqual(scaled["minReplicaCount"], CONTRACT.SCALE_MIN_REPLICAS)
         self.assertEqual(scaled["maxReplicaCount"], CONTRACT.SCALE_REPLICAS)
 
     def test_extended_lifecycle_timers_follow_native_progress_relation(self):
@@ -524,23 +547,16 @@ class ChartTests(unittest.TestCase):
                 self.assertIs(source["with"]["persist-credentials"], False)
 
     def test_unknown_keys_are_rejected_in_every_strict_object(self):
-        store = {"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017"}}}
-        unknown = {"unknownSetting": 1}
-        cases = [
-            unknown,
-            {"nodeConfig": unknown},
-            {"nodeConfig": {"lua": unknown}},
-            {"nodeConfig": {"transport": unknown}},
-            {"nodeConfig": {"transport": {"timeouts": unknown}}},
-            {"nodeConfig": {"transport": {"keepalive": unknown}}},
-            {"nodeConfig": {"overload": unknown}},
-            {"nodeConfig": {"overload": {"memory": unknown}}},
-            {"nodeConfig": {"discovery": unknown}},
-            {"nodeConfig": {"diagnostics": unknown}},
-            {"stores": [dict(store, **unknown)]},
-        ]
-        for invalid in cases:
-            with self.subTest(invalid=invalid):
+        schema = json.loads((ROOT / "charts/weir/values.schema.json").read_text())
+        paths = strict_object_paths(schema)
+        expected = [(), ("image",), ("nodeConfig", "transport", "timeouts"), ("stores", "[]", "backend", "tls"),
+                    ("autoscaling", "scaleDown", "policies", "[]"), ("lifecycle",)]
+        for path in expected:
+            self.assertIn(path, paths)
+        for path in paths:
+            with self.subTest(path=".".join(path)):
+                unknown = {"unknownSetting": 1}
+                invalid = nest(path, unknown)
                 result = render(invalid, success=False)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, "")
