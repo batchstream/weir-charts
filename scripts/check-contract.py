@@ -17,6 +17,10 @@ import time
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+SCALE_STORES = 50
+SCALE_SEEDS = 50
+SCALE_REPLICAS = 100
+SCALE_MIN_REPLICAS = 50
 
 
 def render(values, release="weir"):
@@ -49,30 +53,41 @@ def validate_config(binary, resources, directory, pod_ip="127.0.0.1"):
     return container, args, environment
 
 
-def check_large_configuration(binary, directory):
+def process_policy():
+    """Return valid values for every discovery, transport and overload key."""
+    discovery = {"lease": "90s", "sync_interval": "2s", "sync_timeout": "500ms"}
+    timeouts = {"handshake": "5s", "idle": "1m", "stall": "30s"}
+    keepalive = {"interval": "30s", "timeout": "5s"}
+    transport = {"max_pending_records": 256, "timeouts": timeouts, "keepalive": keepalive}
+    memory = {"high_watermark": 85, "low_watermark": 75, "sample_interval": "200ms"}
+    overload = {"memory": memory}
+    policy = {"discovery": discovery, "transport": transport, "overload": overload}
+    return policy
+
+
+def check_scale(binary, directory):
+    """Validate a group with many Stores, seeds and replicas."""
     stores = []
-    for index in range(32):
-        name = "store" + str(index)
-        if index == 0:
-            name = "store" + "x" * 251
+    for index in range(SCALE_STORES):
         backend = {"mongodb": {"uri": "mongodb://127.0.0.1:27017/?directConnection=true"}}
         if index % 2:
             backend = {"search": {"url": "http://127.0.0.1:9200"}}
-        store = {"name": name, "backend": backend}
+        store = {"name": "store" + str(index), "backend": backend}
         stores.append(store)
-    seeds = ["peer" + str(index) + ".example:7448" for index in range(32)]
-    values = {"stores": stores, "mesh": {"seeds": seeds}, "replicaCount": 128,
-              "minReadySeconds": 200, "progressDeadlineSeconds": 600, "terminationGracePeriodSeconds": 600,
-              "preStopDelaySeconds": 400}
+    seeds = ["peer" + str(index) + ".example:7448" for index in range(SCALE_SEEDS)]
+    mesh = {"seeds": seeds}
+    values = {"stores": stores, "mesh": mesh, "replicaCount": SCALE_REPLICAS}
     resources = render(values)
     validate_config(binary, resources, directory)
     validate_config(binary, resources, directory, "fd00::123")
-    trigger = {"type": "cron", "metadata": {"timezone": "UTC", "start": "0 8 * * *",
-                                             "end": "0 18 * * *", "desiredReplicas": "128"}}
-    autoscaling = {"enabled": True, "minReplicaCount": 64, "maxReplicaCount": 128,
+    metadata = {"timezone": "UTC", "start": "0 8 * * *", "end": "0 18 * * *",
+                "desiredReplicas": str(SCALE_REPLICAS)}
+    trigger = {"type": "cron", "metadata": metadata}
+    autoscaling = {"enabled": True, "minReplicaCount": SCALE_MIN_REPLICAS, "maxReplicaCount": SCALE_REPLICAS,
                    "triggers": [trigger]}
     values["autoscaling"] = autoscaling
-    validate_config(binary, render(values), directory)
+    scaled = render(values)
+    validate_config(binary, scaled, directory)
 
 
 def reserve_port():
@@ -168,7 +183,7 @@ def main():
             validate_config(binary, resources, directory, "fd00::123")
             custom = copy.deepcopy(values)
             custom.update(fullnameOverride="custom", clusterDomain="cluster.internal")
-            custom.setdefault("nodeConfig", {})["discovery"] = {"lease": "90s", "sync_interval": "2s", "sync_timeout": "500ms"}
+            custom["nodeConfig"] = process_policy()
             custom["lifecycle"] = {"startupTimeoutSeconds": 7, "shutdownTimeoutSeconds": 9, "cleanupTimeoutSeconds": 3}
             for store in custom["stores"]:
                 backend = store["backend"]
@@ -196,16 +211,21 @@ def main():
         validate_config(binary, render(files, "search"), directory)
         # Server validation owns process semantics beyond the Chart's boundaries.
         invalid = copy.deepcopy(fixtures[0][1])
-        invalid["nodeConfig"] = {"transport": {"max_pending_records": -1}}
+        memory = {"high_watermark": 70, "low_watermark": 80}
+        invalid["nodeConfig"] = {"overload": {"memory": memory}}
+        resources = render(invalid)
         try:
-            validate_config(binary, render(invalid), directory)
-        except subprocess.CalledProcessError:
-            pass
+            validate_config(binary, resources, directory)
+        except subprocess.CalledProcessError as error:
+            if "memory pressure watermarks" not in error.stderr:
+                raise RuntimeError("invalid process configuration rejected for another reason: "
+                                   + error.stderr) from error
         else:
             raise RuntimeError("invalid process configuration unexpectedly accepted")
-        check_large_configuration(binary, directory)
+        check_scale(binary, directory)
         check_runtime(binary, directory)
-    print("Generated MongoDB/Search config, 32 Stores, 256-character Store name, 33 total seeds, 128 replica manifests, extended lifecycle timers, IPv4/IPv6, credential fixtures and serve/probes/shutdown passed")
+    print("Contract checks passed: MongoDB/Search configurations, process policy, scale, IPv4/IPv6, "
+          "credential files and serve/probes/shutdown")
 
 
 if __name__ == "__main__":

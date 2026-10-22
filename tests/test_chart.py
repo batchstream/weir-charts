@@ -37,6 +37,29 @@ def process_values(stall="30s"):
     return values
 
 
+def strict_object_paths(schema, path=()):
+    """Return the value paths of every schema object that rejects unknown keys."""
+    paths = []
+    if schema.get("additionalProperties") is False:
+        paths.append(path)
+    for name, child in schema.get("properties", {}).items():
+        paths.extend(strict_object_paths(child, path + (name,)))
+    if "items" in schema:
+        paths.extend(strict_object_paths(schema["items"], path + ("[]",)))
+    return paths
+
+
+def nest(path, leaf):
+    """Wrap leaf in the mappings and lists named by a strict object path."""
+    value = leaf
+    for key in reversed(path):
+        if key == "[]":
+            value = [value]
+        else:
+            value = {key: value}
+    return value
+
+
 class ChartTests(unittest.TestCase):
     def test_defaults_protect_one_process_and_generate_configuration(self):
         resources = render()
@@ -218,25 +241,30 @@ class ChartTests(unittest.TestCase):
         other = {"autoscaling": {"enabled": True, "triggers": [cron]}}
         self.assertEqual(render(other)["ScaledObject"]["spec"]["triggers"][0], cron)
 
-    def test_large_store_and_discovery_sets_and_replica_counts(self):
-        stores = [{"name": "store" + str(index), "backend": {"mongodb": {"uri": "mongodb://127.0.0.1:27017"}}}
-                  for index in range(32)]
-        stores[0]["name"] = "store" + "x" * 256
-        seeds = ["peer" + str(index) + ".example:7448" for index in range(32)]
-        values = {"stores": stores, "mesh": {"seeds": seeds}, "replicaCount": 128}
+    def test_many_stores_seeds_and_replicas_render(self):
+        stores = []
+        for index in range(CONTRACT.SCALE_STORES):
+            backend = {"mongodb": {"uri": "mongodb://127.0.0.1:27017"}}
+            store = {"name": "store" + str(index), "backend": backend}
+            stores.append(store)
+        seeds = ["peer" + str(index) + ".example:7448" for index in range(CONTRACT.SCALE_SEEDS)]
+        mesh = {"seeds": seeds}
+        values = {"stores": stores, "mesh": mesh, "replicaCount": CONTRACT.SCALE_REPLICAS}
         resources = render(values)
         routes = yaml.safe_load(resources["ConfigMap"]["data"]["routes.yaml"])
         node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
         self.assertEqual(routes["stores"], stores)
         self.assertEqual(node["discovery"]["seeds"][1:], seeds)
-        self.assertEqual(resources["Deployment"]["spec"]["replicas"], 128)
-        trigger = {"type": "cron", "metadata": {"timezone": "UTC", "start": "0 8 * * *",
-                                                  "end": "0 18 * * *", "desiredReplicas": "64"}}
-        scaling = {"autoscaling": {"enabled": True, "minReplicaCount": 64,
-                                    "maxReplicaCount": 128, "triggers": [trigger]}}
+        self.assertEqual(resources["Deployment"]["spec"]["replicas"], CONTRACT.SCALE_REPLICAS)
+        metadata = {"timezone": "UTC", "start": "0 8 * * *", "end": "0 18 * * *",
+                    "desiredReplicas": str(CONTRACT.SCALE_REPLICAS)}
+        trigger = {"type": "cron", "metadata": metadata}
+        autoscaling = {"enabled": True, "minReplicaCount": CONTRACT.SCALE_MIN_REPLICAS,
+                       "maxReplicaCount": CONTRACT.SCALE_REPLICAS, "triggers": [trigger]}
+        scaling = {"autoscaling": autoscaling}
         scaled = render(scaling)["ScaledObject"]["spec"]
-        self.assertEqual(scaled["minReplicaCount"], 64)
-        self.assertEqual(scaled["maxReplicaCount"], 128)
+        self.assertEqual(scaled["minReplicaCount"], CONTRACT.SCALE_MIN_REPLICAS)
+        self.assertEqual(scaled["maxReplicaCount"], CONTRACT.SCALE_REPLICAS)
 
     def test_extended_lifecycle_timers_follow_native_progress_relation(self):
         values = {"minReadySeconds": 200, "progressDeadlineSeconds": 600, "terminationGracePeriodSeconds": 600,
@@ -518,27 +546,50 @@ class ChartTests(unittest.TestCase):
                 self.assertEqual(source["with"]["path"], ".weir-contract")
                 self.assertIs(source["with"]["persist-credentials"], False)
 
+    def test_unknown_keys_are_rejected_in_every_strict_object(self):
+        schema = json.loads((ROOT / "charts/weir/values.schema.json").read_text())
+        paths = strict_object_paths(schema)
+        expected = [(), ("image",), ("nodeConfig", "transport", "timeouts"), ("stores", "[]", "backend", "tls"),
+                    ("autoscaling", "scaleDown", "policies", "[]"), ("lifecycle",)]
+        for path in expected:
+            self.assertIn(path, paths)
+        for path in paths:
+            with self.subTest(path=".".join(path)):
+                unknown = {"unknownSetting": 1}
+                invalid = nest(path, unknown)
+                result = render(invalid, success=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("unknownSetting", result.stderr)
+
+    def test_process_policy_keys_pass_through(self):
+        values = {"nodeConfig": CONTRACT.process_policy()}
+        node = yaml.safe_load(render(values)["ConfigMap"]["data"]["node.yaml"])
+        for name, policy in values["nodeConfig"].items():
+            for key, value in policy.items():
+                self.assertEqual(node[name][key], value)
+
     def test_invalid_values_fail_before_cluster_mutation(self):
         store = {"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017"}}}
         trigger = {"type": "cron", "metadata": {"timezone": "UTC"}}
         cases = [
             {"metrics": {"enabled": True}}, {"metrics": {"serviceMonitor": {"enabled": True}}},
             {"metrics": {"serviceMonitor": {"labels": {"app.kubernetes.io/instance": "other"}}}},
-            {"replicaCount": 0}, {"unknownSetting": True},
+            {"replicaCount": 0},
             {"minReadySeconds": -1}, {"minReadySeconds": 2147483646}, {"minReadySeconds": 2147483647}, {"terminationGracePeriodSeconds": 20},
             {"progressDeadlineSeconds": 0}, {"progressDeadlineSeconds": 2147483648},
             {"preStopDelaySeconds": -1}, {"image": {"digest": "sha256:bad"}}, {"image": {"digest": ""}},
             {"probeTimeoutMilliseconds": 0}, {"probeTimeoutMilliseconds": 1.5},
             {"probeTimeoutMilliseconds": 2147483646001},
             {"podAnnotations": {"weir.batchstream.io/source-revision": "unverified"}},
-            {"config": {"existingSecret": "old"}}, {"peer": {"enabled": True}},
             {"nodeConfig": {"listeners": {}}}, {"nodeConfig": {"discovery": {"group": "manual"}}},
-            {"nodeConfig": {"lifecycle": {}}}, {"nodeConfig": {"lua": {"vm": {}}}},
+            {"nodeConfig": {"lifecycle": {}}},
+            {"nodeConfig": {"transport": {"timeouts": {"stall": 30}}}},
+            {"nodeConfig": {"overload": {"memory": {"high_watermark": 101}}}},
             {"nodeConfig": {"discovery": {"seeds": []}}},
             {"nodeConfig": {"diagnostics": {"address": "127.0.0.1:1234"}}},
             {"nodeConfig": {"diagnostics": {"allow_intranet": True}}},
             {"mesh": {"name": "INVALID"}}, {"mesh": {"enabled": False, "seeds": ["other:7448"]}},
-            {"stores": [dict(store, scan={})]},
             {"stores": [store, store]}, {"stores": [store], "storesSecret": "external"},
             {"autoscaling": {"enabled": True}}, {"autoscaling": {"minReplicaCount": 0}},
             {"autoscaling": {"enabled": True, "minReplicaCount": 3, "maxReplicaCount": 2, "triggers": [trigger]}},

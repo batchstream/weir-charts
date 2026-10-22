@@ -424,10 +424,72 @@
           }
         },
         "transport": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_pending_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "timeouts": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "handshake": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "idle": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "stall": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "keepalive": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "interval": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timeout": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
         },
         "overload": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memory": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "high_watermark": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "low_watermark": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "sample_interval": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
         },
         "discovery": {
           "type": "object",
