@@ -1,6 +1,6 @@
 # Weir Helm charts
 
-Deploy [Weir](https://github.com/batchstream/weir), a synchronous MongoDB and Search data plane, on Kubernetes. Helm 3.17+ and Kubernetes 1.30+ are required. Chart `0.10.0-rc.1` targets server source [commit `26705ed5ce29`](https://github.com/batchstream/weir/commit/26705ed5ce29555ca9edf50ccf012e0a5727230e). `Chart.yaml` records that source contract and `values.yaml` pins the immutable image `ghcr.io/batchstream/weir@sha256:c3713f8754519489cc8021ced8579ef9af95ead4789550ffd2243b17e4def544`; both validation and release workflows build that exact source.
+Deploy [Weir](https://github.com/batchstream/weir), a synchronous MongoDB and Search data plane, on Kubernetes. Helm 3.17+ and Kubernetes 1.30+ are required. Chart `0.10.0-rc.2` targets server source [commit `3f3db884e4a3`](https://github.com/batchstream/weir/commit/3f3db884e4a39f9d6556c6b7b2af4385afdfae9b). `Chart.yaml` records that source contract and `values.yaml` pins the immutable image `ghcr.io/batchstream/weir@sha256:3144fcb210fb7ab323bebf358473adce78baf1cee88ac46c30df8b36f533440d`; both validation and release workflows build that exact source.
 
 One Helm release is one Store group. Every replica hosts the same Store definitions; a group can host several Stores, and each group is released and scaled independently. Replicas share nothing with each other. Each Pod runs one Weir process with Lua inside that process. Backends, collections, indices, credentials and backups are provisioned separately.
 
