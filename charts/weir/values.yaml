@@ -4,10 +4,9 @@ minReadySeconds: 15
 progressDeadlineSeconds: 180
 nameOverride: ""
 fullnameOverride: ""
-clusterDomain: cluster.local
 image:
   repository: ghcr.io/batchstream/weir
-  digest: sha256:c3713f8754519489cc8021ced8579ef9af95ead4789550ffd2243b17e4def544
+  digest: sha256:3144fcb210fb7ab323bebf358473adce78baf1cee88ac46c30df8b36f533440d
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 # Backends and credentials are provisioned separately.
@@ -24,13 +23,6 @@ lifecycle:
   cleanupTimeoutSeconds: 2
 service:
   port: 7447
-  annotations: {}
-mesh:
-  enabled: true
-  name: weir
-  port: 7448
-  # Additional peer endpoints; cross-namespace access needs explicit network rules.
-  seeds: []
 diagnosticsPort: 7449
 # The CLI deadline; kubelet's whole-second timeout is rounded up plus one second.
 probeTimeoutMilliseconds: 750
@@ -65,8 +57,8 @@ resources:
     cpu: "2"
     memory: 3Gi
 preStopDelaySeconds: 15
-# 0 derives preStopDelaySeconds + shutdownTimeoutSeconds + 2*cleanupTimeoutSeconds + one second.
-# Cleanup has two sequential bounded phases; the extra second permits final exit.
+# 0 derives preStopDelaySeconds + shutdownTimeoutSeconds + cleanupTimeoutSeconds + one second.
+# The extra second permits final exit.
 # A positive override can reserve more exit overhead and must cover this budget.
 terminationGracePeriodSeconds: 0
 strategy:
@@ -87,7 +79,7 @@ networkPolicy:
       ports:
         - protocol: TCP
           port: grpc
-  # Add precise backend destinations and any extra peer endpoints here.
+  # Add precise backend destinations here.
   egress: []
   dns:
     namespaceSelector:

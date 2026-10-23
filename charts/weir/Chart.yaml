@@ -2,10 +2,10 @@ apiVersion: v2
 name: weir
 description: Synchronous MongoDB and Search data plane
 type: application
-version: 0.10.0-rc.1
-appVersion: "26705ed5ce29"
+version: 0.10.0-rc.2
+appVersion: "3f3db884e4a3"
 annotations:
-  weir.batchstream.io/source-revision: "26705ed5ce29555ca9edf50ccf012e0a5727230e"
+  weir.batchstream.io/source-revision: "3f3db884e4a39f9d6556c6b7b2af4385afdfae9b"
 kubeVersion: ">=1.30.0-0"
 home: https://github.com/batchstream/weir
 sources:

@@ -4,27 +4,15 @@
 {{- define "weir.fullname" -}}
 {{- default (printf "%s-%s" .Release.Name (include "weir.name" .)) .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
-{{- define "weir.headlessName" -}}
-{{ printf "%s-headless" (include "weir.fullname" . | trunc 54 | trimSuffix "-") }}
-{{- end -}}
-{{- define "weir.meshName" -}}
-{{ printf "%s-mesh" (include "weir.fullname" . | trunc 58 | trimSuffix "-") }}
-{{- end -}}
 {{- define "weir.metricsName" -}}
 {{ printf "%s-metrics" (include "weir.fullname" . | trunc 55 | trimSuffix "-") }}
 {{- end -}}
 {{- define "weir.group" -}}
 {{ printf "%s/%s" .Release.Namespace .Release.Name }}
 {{- end -}}
-{{- define "weir.address" -}}
-{{ printf "%s.%s.svc.%s" .name .root.Release.Namespace .root.Values.clusterDomain }}
-{{- end -}}
 {{- define "weir.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "weir.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end -}}
-{{- define "weir.meshLabels" -}}
-weir.batchstream.io/mesh: {{ .Values.mesh.name | quote }}
 {{- end -}}
 {{- define "weir.labels" -}}
 {{ include "weir.selectorLabels" . }}
@@ -46,19 +34,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- $_ := set $diagnostics "address" (printf "[::]:%v" .Values.diagnosticsPort) -}}
 {{- $_ := set $diagnostics "allow_intranet" true -}}
 {{- end -}}
-{{- $advertise := printf "%s:%v" (include "weir.address" (dict "root" . "name" (include "weir.headlessName" .))) .Values.service.port -}}
-{{- $discovery := default dict $node.discovery -}}
-{{- $_ := set $discovery "group" (include "weir.group" .) -}}
-{{- $_ := set $discovery "advertise" (list $advertise) -}}
-{{- if .Values.mesh.enabled -}}
-{{- $_ := set $listeners "peer" (printf "[::]:%v" .Values.mesh.port) -}}
-{{- $_ := set $discovery "peer_address_env" "WEIR_PEER_ADDRESS" -}}
-{{- $seed := printf "%s:%v" (include "weir.address" (dict "root" . "name" (include "weir.meshName" .))) .Values.mesh.port -}}
-{{- $_ := set $discovery "seeds" (concat (list $seed) .Values.mesh.seeds) -}}
-{{- end -}}
 {{- $_ := set $node "listeners" $listeners -}}
 {{- $_ := set $node "diagnostics" $diagnostics -}}
-{{- $_ := set $node "discovery" $discovery -}}
 {{- $node | toYaml -}}
 {{- end -}}
 {{- define "weir.validate" -}}
@@ -67,8 +44,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail (printf "%s is managed by the Chart and cannot be overridden in podAnnotations" $key) -}}
 {{- end -}}
 {{- end -}}
-{{- if or (eq (int .Values.service.port) (int .Values.diagnosticsPort)) (and .Values.mesh.enabled (or (eq (int .Values.mesh.port) (int .Values.service.port)) (eq (int .Values.mesh.port) (int .Values.diagnosticsPort)))) -}}
-{{- fail "service.port, diagnosticsPort and enabled mesh.port must be distinct" -}}
+{{- if eq (int .Values.service.port) (int .Values.diagnosticsPort) -}}
+{{- fail "service.port and diagnosticsPort must be distinct" -}}
 {{- end -}}
 {{- range $key := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" "app.kubernetes.io/version" "app.kubernetes.io/managed-by" "helm.sh/chart" -}}
 {{- if hasKey $.Values.metrics.serviceMonitor.labels $key -}}
@@ -88,9 +65,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if or (regexMatch "^[^:]+://[^/?#]*@" (default "" $mongodb.uri)) (regexMatch "^[^:]+://[^/?#]*@" (default "" $search.url)) -}}
 {{- fail "backend URI userinfo is unsupported; use credential-file authentication" -}}
 {{- end -}}
-{{- end -}}
-{{- if and (not .Values.mesh.enabled) (not (empty .Values.mesh.seeds)) -}}
-{{- fail "mesh.seeds requires mesh.enabled" -}}
 {{- end -}}
 {{- if and .Values.metrics.enabled (empty .Values.metrics.ingress) .Values.networkPolicy.enabled -}}
 {{- fail "metrics.enabled requires explicit metrics.ingress sources when NetworkPolicy is enabled" -}}

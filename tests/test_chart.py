@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -30,6 +31,23 @@ def render(values=None, success=True, release="weir", namespace="default"):
     resources = {item["kind"]: item for item in documents}
     resources["Services"] = {item["metadata"]["name"]: item for item in documents if item["kind"] == "Service"}
     return resources
+
+
+def render_notes(values, release, namespace):
+    """Render NOTES.txt without a cluster by embedding it in a copied chart."""
+    with tempfile.TemporaryDirectory() as directory:
+        chart = Path(directory) / "weir"
+        shutil.copytree(ROOT / "charts/weir", chart)
+        notes = (chart / "templates/NOTES.txt").read_text()
+        indented = "".join("  " + line for line in notes.splitlines(keepends=True))
+        (chart / "templates/rendered-notes.yaml").write_text("notes: |\n" + indented)
+        values_file = Path(directory) / "values.json"
+        values_file.write_text(json.dumps(values))
+        command = ["helm", "template", release, str(chart), "--namespace", namespace,
+                   "--show-only", "templates/rendered-notes.yaml",
+                   "-f", str(ROOT / "tests/values.yaml"), "-f", str(values_file)]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+    return yaml.safe_load(result.stdout)["notes"]
 
 
 def process_values(stall="30s"):
@@ -87,59 +105,28 @@ class ChartTests(unittest.TestCase):
         self.assertNotIn("revisionHistoryLimit", resources["Deployment"]["spec"])
         self.assertIn("@sha256:", container["image"])
         node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
-        self.assertEqual(node["discovery"]["group"], "default/weir")
-        self.assertEqual(node["discovery"]["advertise"], ["weir-weir-headless.default.svc.cluster.local:7447"])
-        self.assertEqual(node["discovery"]["seeds"], ["weir-weir-mesh.default.svc.cluster.local:7448"])
-        self.assertEqual(node["listeners"]["application"], "[::]:7447")
+        self.assertEqual(node["listeners"], {"application": "[::]:7447"})
         self.assertEqual(node["diagnostics"]["address"], "127.0.0.1:7449")
         self.assertEqual(yaml.safe_load(resources["ConfigMap"]["data"]["routes.yaml"])["stores"], [])
 
-    def test_group_services_and_mesh_seeds_have_distinct_selectors(self):
+    def test_group_services_select_only_their_release(self):
         first = render(release="mongo", namespace="application")
         second = render(release="search", namespace="application")
         for release, resources in (("mongo", first), ("search", second)):
-            ordinary = resources["Services"][release + "-weir"]["spec"]
-            headless = resources["Services"][release + "-weir-headless"]["spec"]
-            seed = resources["Services"][release + "-weir-mesh"]["spec"]
-            self.assertEqual(ordinary["selector"]["app.kubernetes.io/instance"], release)
-            self.assertEqual(headless["selector"], ordinary["selector"])
-            self.assertEqual(headless["clusterIP"], "None")
-            self.assertEqual([p["name"] for p in ordinary["ports"]], ["grpc"])
-            self.assertEqual(seed["type"], "ClusterIP")
-            self.assertNotIn("app.kubernetes.io/instance", seed["selector"])
-            self.assertEqual(seed["selector"]["weir.batchstream.io/mesh"], "weir")
-            self.assertEqual([p["name"] for p in seed["ports"]], ["grpc", "peer"])
-            labels = resources["Deployment"]["spec"]["template"]["metadata"]["labels"]
-            self.assertEqual(labels["weir.batchstream.io/mesh"], "weir")
+            self.assertEqual(set(resources["Services"]), {release + "-weir"})
+            service = resources["Services"][release + "-weir"]["spec"]
+            self.assertEqual(service["selector"]["app.kubernetes.io/instance"], release)
+            self.assertEqual(service["clusterIP"], "None")
+            self.assertEqual([p["name"] for p in service["ports"]], ["grpc"])
         self.assertNotEqual(first["Services"].keys(), second["Services"].keys())
 
-    def test_standalone_has_no_mesh_membership_or_peer_access(self):
-        values = {"mesh": {"enabled": False}}
-        resources = render(values)
-        pod = resources["Deployment"]["spec"]["template"]
-        self.assertNotIn("weir.batchstream.io/mesh", pod["metadata"]["labels"])
-        self.assertNotIn("weir-weir-mesh", resources["Services"])
-        self.assertNotIn("env", pod["spec"]["containers"][0])
-        node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
-        self.assertNotIn("peer", node["listeners"])
-        self.assertNotIn("seeds", node["discovery"])
-        self.assertEqual(len(resources["NetworkPolicy"]["spec"]["egress"]), 1)
-
-    def test_network_policy_automatically_isolates_mesh_named_peer_ports(self):
-        values = {"mesh": {"name": "private", "port": 7558}, "service": {"port": 7557}}
+    def test_network_policy_admits_clients_on_the_named_grpc_port_and_dns_only(self):
+        values = {"service": {"port": 7557}}
         resources = render(values)
         policy = resources["NetworkPolicy"]["spec"]
         self.assertEqual(policy["policyTypes"], ["Ingress", "Egress"])
-        self.assertEqual(len(policy["egress"]), 2)
-        peer_ingress = policy["ingress"][-1]
-        peer_egress = policy["egress"][-1]
-        selector = peer_ingress["from"][0]["podSelector"]["matchLabels"]
-        self.assertEqual(selector["weir.batchstream.io/mesh"], "private")
-        self.assertNotIn("namespaceSelector", peer_ingress["from"][0])
-        self.assertEqual(peer_egress["to"][0]["podSelector"]["matchLabels"], selector)
-        self.assertEqual(peer_ingress["ports"][0]["port"], "peer")
-        self.assertEqual(peer_egress["ports"][0]["port"], "peer")
-        self.assertEqual(resources["Services"]["weir-weir-mesh"]["spec"]["ports"][1]["targetPort"], "peer")
+        self.assertEqual(len(policy["ingress"]), 1)
+        self.assertEqual(len(policy["egress"]), 1)
         self.assertEqual(policy["ingress"][0]["from"][0]["podSelector"]["matchLabels"]["weir-client"], "true")
         self.assertEqual(policy["ingress"][0]["ports"][0]["port"], "grpc")
         container_ports = resources["Deployment"]["spec"]["template"]["spec"]["containers"][0]["ports"]
@@ -168,22 +155,17 @@ class ChartTests(unittest.TestCase):
         self.assertNotEqual(checksum_a, changed["Deployment"]["spec"]["template"]["metadata"]["annotations"]["checksum/config"])
         self.assertNotIn("Secret", secret)
 
-    def test_derived_identity_and_addresses_follow_ports_domain_and_overrides(self):
-        values = {"fullnameOverride": "custom", "clusterDomain": "cluster.internal", "service": {"port": 7557},
-                  "mesh": {"port": 7558, "seeds": ["other.ns.svc.cluster.internal:7558"]}, "diagnosticsPort": 7559,
-                  "nodeConfig": {"discovery": {"lease": "90s", "sync_interval": "2s", "sync_timeout": "500ms"}}}
+    def test_derived_identity_and_addresses_follow_ports_and_overrides(self):
+        values = {"fullnameOverride": "custom", "service": {"port": 7557}, "diagnosticsPort": 7559}
         resources = render(values, release="payments", namespace="backend")
         node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
-        self.assertEqual(node["discovery"]["group"], "backend/payments")
-        self.assertEqual(node["discovery"]["lease"], "90s")
-        self.assertEqual(node["discovery"]["sync_interval"], "2s")
-        self.assertEqual(node["discovery"]["sync_timeout"], "500ms")
-        self.assertEqual(node["discovery"]["advertise"], ["custom-headless.backend.svc.cluster.internal:7557"])
-        self.assertEqual(node["discovery"]["seeds"], ["custom-mesh.backend.svc.cluster.internal:7558", "other.ns.svc.cluster.internal:7558"])
-        self.assertEqual(node["listeners"]["application"], "[::]:7557")
-        self.assertEqual(node["listeners"]["peer"], "[::]:7558")
+        self.assertEqual(node["listeners"], {"application": "[::]:7557"})
+        self.assertEqual(node["diagnostics"]["address"], "127.0.0.1:7559")
+        self.assertEqual(set(resources["Services"]), {"custom"})
+        notes = render_notes(values, release="payments", namespace="backend")
+        self.assertIn("SDK address (weir.New), resolving to this group's Ready Pods:\ncustom.backend.svc:7557\n", notes)
         pod = resources["Deployment"]["spec"]["template"]["spec"]
-        self.assertEqual(pod["containers"][0]["env"][1]["value"], "[$(POD_IP)]:7558")
+        self.assertNotIn("env", pod["containers"][0])
         self.assertEqual(pod["containers"][0]["readinessProbe"]["exec"]["command"][-1], "127.0.0.1:7559")
 
     def test_three_replicas_keep_retirement_and_disruption_guards(self):
@@ -193,7 +175,7 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(deployment["replicas"], 3)
         self.assertEqual(deployment["minReadySeconds"], 15)
         pod = deployment["template"]["spec"]
-        self.assertEqual(pod["terminationGracePeriodSeconds"], 25)
+        self.assertEqual(pod["terminationGracePeriodSeconds"], 23)
         self.assertEqual(pod["containers"][0]["lifecycle"]["preStop"]["sleep"]["seconds"], 15)
         self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxSurge"], 0)
         self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxUnavailable"], 1)
@@ -217,9 +199,11 @@ class ChartTests(unittest.TestCase):
         labels = {rule["targetLabel"]: rule["replacement"] for rule in endpoint["relabelings"]}
         self.assertEqual(labels["namespace"], "application")
         self.assertEqual(labels["weir_group"], "application/mongo")
-        self.assertEqual(labels["weir_mesh"], "weir")
+        self.assertEqual(set(labels), {"namespace", "weir_group"})
         self.assertEqual(monitor["namespaceSelector"]["matchNames"], ["application"])
         self.assertEqual(resources["ServiceMonitor"]["metadata"]["labels"]["release"], "monitoring")
+        ingress = resources["NetworkPolicy"]["spec"]["ingress"]
+        self.assertEqual(ingress[-len(values["metrics"]["ingress"]):], values["metrics"]["ingress"])
 
     def test_keda_controls_replica_count_and_preserves_standard_triggers(self):
         values = yaml.safe_load((ROOT / "examples/prometheus-autoscaling.yaml").read_text())
@@ -241,20 +225,16 @@ class ChartTests(unittest.TestCase):
         other = {"autoscaling": {"enabled": True, "triggers": [cron]}}
         self.assertEqual(render(other)["ScaledObject"]["spec"]["triggers"][0], cron)
 
-    def test_many_stores_seeds_and_replicas_render(self):
+    def test_many_stores_and_replicas_render(self):
         stores = []
         for index in range(CONTRACT.SCALE_STORES):
             backend = {"mongodb": {"uri": "mongodb://127.0.0.1:27017"}}
             store = {"name": "store" + str(index), "backend": backend}
             stores.append(store)
-        seeds = ["peer" + str(index) + ".example:7448" for index in range(CONTRACT.SCALE_SEEDS)]
-        mesh = {"seeds": seeds}
-        values = {"stores": stores, "mesh": mesh, "replicaCount": CONTRACT.SCALE_REPLICAS}
+        values = {"stores": stores, "replicaCount": CONTRACT.SCALE_REPLICAS}
         resources = render(values)
         routes = yaml.safe_load(resources["ConfigMap"]["data"]["routes.yaml"])
-        node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
         self.assertEqual(routes["stores"], stores)
-        self.assertEqual(node["discovery"]["seeds"][1:], seeds)
         self.assertEqual(resources["Deployment"]["spec"]["replicas"], CONTRACT.SCALE_REPLICAS)
         metadata = {"timezone": "UTC", "start": "0 8 * * *", "end": "0 18 * * *",
                     "desiredReplicas": str(CONTRACT.SCALE_REPLICAS)}
@@ -305,17 +285,17 @@ class ChartTests(unittest.TestCase):
         startup_budget = probe["failureThreshold"] * 10
         self.assertGreater(startup_budget, 300)
         self.assertGreater(deployment["progressDeadlineSeconds"], startup_budget + deployment["minReadySeconds"])
-        self.assertEqual(pod["terminationGracePeriodSeconds"], 171)
+        self.assertEqual(pod["terminationGracePeriodSeconds"], 161)
         node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
         expected_lifecycle = {"startup_timeout": "300s", "shutdown_timeout": "120s", "cleanup_timeout": "10s"}
         self.assertEqual(node["lifecycle"], expected_lifecycle)
 
         values["terminationGracePeriodSeconds"] = 180
         self.assertEqual(render(values)["Deployment"]["spec"]["template"]["spec"]["terminationGracePeriodSeconds"], 180)
-        values["terminationGracePeriodSeconds"] = 170
+        values["terminationGracePeriodSeconds"] = 160
         rejected = render(values, success=False)
         self.assertNotEqual(rejected.returncode, 0)
-        self.assertIn("at least 171", rejected.stderr)
+        self.assertIn("at least 161", rejected.stderr)
 
     def test_lifecycle_profile_uses_native_integer_seconds(self):
         for field in ("startupTimeoutSeconds", "shutdownTimeoutSeconds", "cleanupTimeoutSeconds"):
@@ -433,9 +413,8 @@ class ChartTests(unittest.TestCase):
         self.assertIn("checksum/config", annotations)
         self.assertIn("weir.batchstream.io/source-revision", annotations)
 
-    def test_runtime_fixture_is_loopback_only_and_rejects_stores_or_peers(self):
-        values = {"mesh": {"enabled": False}}
-        config = render(values)["ConfigMap"]
+    def test_runtime_fixture_is_loopback_only_and_rejects_stores(self):
+        config = render()["ConfigMap"]
         resources = [copy.deepcopy(config)]
         CONTRACT.isolate_runtime(resources, 7447, 7449)
         node = yaml.safe_load(resources[0]["data"]["node.yaml"])
@@ -444,18 +423,14 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(node["listeners"], isolated_listeners)
         self.assertEqual(node["diagnostics"]["address"], "127.0.0.1:7449")
         self.assertEqual(yaml.safe_load(config["data"]["node.yaml"])["listeners"], generated_listeners)
-        for case in ("stores", "peer", "seeds", "peer_address_env", "diagnostics"):
+        for case in ("stores", "listener", "diagnostics"):
             with self.subTest(case=case):
                 unsafe = copy.deepcopy(config)
                 node = yaml.safe_load(unsafe["data"]["node.yaml"])
                 if case == "stores":
                     unsafe["data"]["routes.yaml"] = "stores: [{name: forbidden}]"
-                elif case == "peer":
-                    node["listeners"]["peer"] = "127.0.0.1:7448"
-                elif case == "seeds":
-                    node["discovery"]["seeds"] = ["peer.example:7448"]
-                elif case == "peer_address_env":
-                    node["discovery"]["peer_address_env"] = "EXTERNAL_PEER"
+                elif case == "listener":
+                    node["listeners"]["extra"] = "127.0.0.1:7448"
                 else:
                     node["diagnostics"]["address"] = "[::]:7449"
                 unsafe["data"]["node.yaml"] = yaml.safe_dump(node)
@@ -510,11 +485,11 @@ class ChartTests(unittest.TestCase):
                         listener.__exit__.assert_called_once()
 
     def test_chart_identity_matches_pinned_image(self):
-        revision = "26705ed5ce29555ca9edf50ccf012e0a5727230e"
-        digest = "sha256:c3713f8754519489cc8021ced8579ef9af95ead4789550ffd2243b17e4def544"
+        revision = "3f3db884e4a39f9d6556c6b7b2af4385afdfae9b"
+        digest = "sha256:3144fcb210fb7ab323bebf358473adce78baf1cee88ac46c30df8b36f533440d"
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
         values = yaml.safe_load((ROOT / "charts/weir/values.yaml").read_text())
-        self.assertEqual(chart["version"], "0.10.0-rc.1")
+        self.assertEqual(chart["version"], "0.10.0-rc.2")
         self.assertEqual(chart["annotations"]["weir.batchstream.io/source-revision"], revision)
         self.assertEqual(values["image"]["repository"], "ghcr.io/batchstream/weir")
         self.assertEqual(values["image"]["digest"], digest)
@@ -582,20 +557,18 @@ class ChartTests(unittest.TestCase):
             {"probeTimeoutMilliseconds": 0}, {"probeTimeoutMilliseconds": 1.5},
             {"probeTimeoutMilliseconds": 2147483646001},
             {"podAnnotations": {"weir.batchstream.io/source-revision": "unverified"}},
-            {"nodeConfig": {"listeners": {}}}, {"nodeConfig": {"discovery": {"group": "manual"}}},
+            {"nodeConfig": {"listeners": {}}},
             {"nodeConfig": {"lifecycle": {}}},
             {"nodeConfig": {"transport": {"timeouts": {"stall": 30}}}},
             {"nodeConfig": {"overload": {"memory": {"high_watermark": 101}}}},
-            {"nodeConfig": {"discovery": {"seeds": []}}},
             {"nodeConfig": {"diagnostics": {"address": "127.0.0.1:1234"}}},
             {"nodeConfig": {"diagnostics": {"allow_intranet": True}}},
-            {"mesh": {"name": "INVALID"}}, {"mesh": {"enabled": False, "seeds": ["other:7448"]}},
             {"stores": [store, store]}, {"stores": [store], "storesSecret": "external"},
             {"autoscaling": {"enabled": True}}, {"autoscaling": {"minReplicaCount": 0}},
             {"autoscaling": {"enabled": True, "minReplicaCount": 3, "maxReplicaCount": 2, "triggers": [trigger]}},
             {"podDisruptionBudget": {"enabled": True}},
             {"podDisruptionBudget": {"enabled": True}, "autoscaling": {"enabled": True, "minReplicaCount": 1, "triggers": [trigger]}},
-            {"service": {"port": 7449}}, {"mesh": {"port": 7447}}, {"mesh": {"port": 7449}},
+            {"service": {"port": 7449}},
         ]
         for invalid in cases:
             with self.subTest(invalid=invalid):

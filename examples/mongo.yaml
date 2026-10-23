@@ -1,6 +1,4 @@
 # Install this Store group as its own release in namespace application.
-mesh:
-  name: application
 stores:
 - name: mongo
   backend:

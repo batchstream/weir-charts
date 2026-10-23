@@ -1,13 +1,6 @@
 Store group: {{ include "weir.group" . }}
-SDK initialization endpoint: {{ include "weir.address" (dict "root" . "name" (include "weir.fullname" .)) }}:{{ .Values.service.port }}
-Business discovery advertises only this group's Ready Pods:
-{{ include "weir.address" (dict "root" . "name" (include "weir.headlessName" .)) }}:{{ .Values.service.port }}
-{{- if .Values.mesh.enabled }}
-Mesh: {{ .Values.mesh.name }} (namespace {{ .Release.Namespace }})
-SDK Mesh entry: {{ include "weir.address" (dict "root" . "name" (include "weir.meshName" .)) }}:{{ .Values.service.port }}
-Peer bootstrap: {{ include "weir.address" (dict "root" . "name" (include "weir.meshName" .)) }}:{{ .Values.mesh.port }}
-Mesh bootstrap uses each destination Pod's named ports; backend egress remains explicit.
-{{- end }}
+SDK address (weir.New), resolving to this group's Ready Pods:
+{{ include "weir.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
 {{- if .Values.metrics.serviceMonitor.enabled }}
 ServiceMonitor requires an installed Prometheus Operator and a Prometheus selector accepting its labels.
 {{- end }}
@@ -16,6 +9,6 @@ ScaledObject requires an installed KEDA controller and CRDs. Verify its Promethe
 {{- end }}
 
 Validate this immutable image with the generated node.yaml and selected routes.yaml.
-Application and peer traffic require a trusted, isolated network; verify CNI enforcement.
+Application traffic requires a trusted, isolated network; verify CNI enforcement.
 A missing mutation response is UNKNOWN: reconcile before retrying.
-Store ownership or backend changes require a coordinated migration, not an ordinary rolling update.
+Store membership or backend changes require a coordinated migration, not an ordinary rolling update.

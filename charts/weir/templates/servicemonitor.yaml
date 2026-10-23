@@ -25,6 +25,4 @@ spec:
           replacement: {{ .Release.Namespace | quote }}
         - targetLabel: weir_group
           replacement: {{ include "weir.group" . | quote }}
-        - targetLabel: weir_mesh
-          replacement: {{ ternary .Values.mesh.name "" .Values.mesh.enabled | quote }}
 {{- end }}
