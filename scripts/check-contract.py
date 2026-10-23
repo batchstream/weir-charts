@@ -170,7 +170,7 @@ def main():
             resources = render(values, release)
             validate_config(binary, resources, directory)
             custom = copy.deepcopy(values)
-            custom.update(fullnameOverride="custom", clusterDomain="cluster.internal")
+            custom.update(fullnameOverride="custom")
             custom["nodeConfig"] = process_policy()
             custom["lifecycle"] = {"startupTimeoutSeconds": 7, "shutdownTimeoutSeconds": 9, "cleanupTimeoutSeconds": 3}
             for store in custom["stores"]:

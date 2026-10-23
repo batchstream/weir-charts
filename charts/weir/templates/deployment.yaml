@@ -13,10 +13,10 @@
 {{- end -}}
 {{- $shutdown := int .Values.lifecycle.shutdownTimeoutSeconds -}}
 {{- $cleanup := int .Values.lifecycle.cleanupTimeoutSeconds -}}
-{{- $minimumGrace := add (int .Values.preStopDelaySeconds) $shutdown (mul $cleanup 2) 1 -}}
+{{- $minimumGrace := add (int .Values.preStopDelaySeconds) $shutdown $cleanup 1 -}}
 {{- $grace := int (default $minimumGrace .Values.terminationGracePeriodSeconds) -}}
 {{- if lt $grace $minimumGrace -}}
-{{- fail (printf "terminationGracePeriodSeconds must be 0 (automatic) or at least %d: preStopDelaySeconds + shutdownTimeoutSeconds + two cleanupTimeoutSeconds phases + one second for final exit" $minimumGrace) -}}
+{{- fail (printf "terminationGracePeriodSeconds must be 0 (automatic) or at least %d: preStopDelaySeconds + shutdownTimeoutSeconds + cleanupTimeoutSeconds + one second for final exit" $minimumGrace) -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment

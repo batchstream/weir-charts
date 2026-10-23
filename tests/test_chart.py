@@ -32,6 +32,16 @@ def render(values=None, success=True, release="weir", namespace="default"):
     return resources
 
 
+def render_notes(values, release, namespace):
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as handle:
+        json.dump(values, handle)
+        handle.flush()
+        command = ["helm", "install", release, str(ROOT / "charts/weir"), "--namespace", namespace, "--dry-run=client",
+                   "-f", str(ROOT / "tests/values.yaml"), "-f", handle.name]
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+    return result.stdout.split("NOTES:\n", 1)[1]
+
+
 def process_values(stall="30s"):
     values = {"nodeConfig": {"transport": {"timeouts": {"stall": stall}}}}
     return values
@@ -95,14 +105,11 @@ class ChartTests(unittest.TestCase):
         first = render(release="mongo", namespace="application")
         second = render(release="search", namespace="application")
         for release, resources in (("mongo", first), ("search", second)):
-            ordinary = resources["Services"][release + "-weir"]["spec"]
-            headless = resources["Services"][release + "-weir-headless"]["spec"]
-            self.assertEqual(ordinary["selector"]["app.kubernetes.io/instance"], release)
-            self.assertEqual(headless["selector"], ordinary["selector"])
-            self.assertEqual(headless["clusterIP"], "None")
-            self.assertEqual([p["name"] for p in ordinary["ports"]], ["grpc"])
-            self.assertEqual([p["name"] for p in headless["ports"]], ["grpc"])
-        self.assertEqual(set(first["Services"]), {"mongo-weir", "mongo-weir-headless"})
+            self.assertEqual(set(resources["Services"]), {release + "-weir"})
+            service = resources["Services"][release + "-weir"]["spec"]
+            self.assertEqual(service["selector"]["app.kubernetes.io/instance"], release)
+            self.assertEqual(service["clusterIP"], "None")
+            self.assertEqual([p["name"] for p in service["ports"]], ["grpc"])
         self.assertNotEqual(first["Services"].keys(), second["Services"].keys())
 
     def test_network_policy_admits_clients_on_the_named_grpc_port_and_dns_only(self):
@@ -140,13 +147,15 @@ class ChartTests(unittest.TestCase):
         self.assertNotEqual(checksum_a, changed["Deployment"]["spec"]["template"]["metadata"]["annotations"]["checksum/config"])
         self.assertNotIn("Secret", secret)
 
-    def test_derived_identity_and_addresses_follow_ports_domain_and_overrides(self):
+    def test_derived_identity_and_addresses_follow_ports_and_overrides(self):
         values = {"fullnameOverride": "custom", "service": {"port": 7557}, "diagnosticsPort": 7559}
         resources = render(values, release="payments", namespace="backend")
         node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
         self.assertEqual(node["listeners"], {"application": "[::]:7557"})
         self.assertEqual(node["diagnostics"]["address"], "127.0.0.1:7559")
-        self.assertEqual(set(resources["Services"]), {"custom", "custom-headless"})
+        self.assertEqual(set(resources["Services"]), {"custom"})
+        notes = render_notes(values, release="payments", namespace="backend")
+        self.assertIn("SDK address (weir.New), resolving to this group's Ready Pods:\ncustom.backend.svc:7557\n", notes)
         pod = resources["Deployment"]["spec"]["template"]["spec"]
         self.assertNotIn("env", pod["containers"][0])
         self.assertEqual(pod["containers"][0]["readinessProbe"]["exec"]["command"][-1], "127.0.0.1:7559")
@@ -158,7 +167,7 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(deployment["replicas"], 3)
         self.assertEqual(deployment["minReadySeconds"], 15)
         pod = deployment["template"]["spec"]
-        self.assertEqual(pod["terminationGracePeriodSeconds"], 25)
+        self.assertEqual(pod["terminationGracePeriodSeconds"], 23)
         self.assertEqual(pod["containers"][0]["lifecycle"]["preStop"]["sleep"]["seconds"], 15)
         self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxSurge"], 0)
         self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxUnavailable"], 1)
@@ -185,6 +194,8 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(set(labels), {"namespace", "weir_group"})
         self.assertEqual(monitor["namespaceSelector"]["matchNames"], ["application"])
         self.assertEqual(resources["ServiceMonitor"]["metadata"]["labels"]["release"], "monitoring")
+        ingress = resources["NetworkPolicy"]["spec"]["ingress"]
+        self.assertEqual(ingress[-len(values["metrics"]["ingress"]):], values["metrics"]["ingress"])
 
     def test_keda_controls_replica_count_and_preserves_standard_triggers(self):
         values = yaml.safe_load((ROOT / "examples/prometheus-autoscaling.yaml").read_text())
@@ -266,17 +277,17 @@ class ChartTests(unittest.TestCase):
         startup_budget = probe["failureThreshold"] * 10
         self.assertGreater(startup_budget, 300)
         self.assertGreater(deployment["progressDeadlineSeconds"], startup_budget + deployment["minReadySeconds"])
-        self.assertEqual(pod["terminationGracePeriodSeconds"], 171)
+        self.assertEqual(pod["terminationGracePeriodSeconds"], 161)
         node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
         expected_lifecycle = {"startup_timeout": "300s", "shutdown_timeout": "120s", "cleanup_timeout": "10s"}
         self.assertEqual(node["lifecycle"], expected_lifecycle)
 
         values["terminationGracePeriodSeconds"] = 180
         self.assertEqual(render(values)["Deployment"]["spec"]["template"]["spec"]["terminationGracePeriodSeconds"], 180)
-        values["terminationGracePeriodSeconds"] = 170
+        values["terminationGracePeriodSeconds"] = 160
         rejected = render(values, success=False)
         self.assertNotEqual(rejected.returncode, 0)
-        self.assertIn("at least 171", rejected.stderr)
+        self.assertIn("at least 161", rejected.stderr)
 
     def test_lifecycle_profile_uses_native_integer_seconds(self):
         for field in ("startupTimeoutSeconds", "shutdownTimeoutSeconds", "cleanupTimeoutSeconds"):

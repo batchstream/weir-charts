@@ -30,7 +30,6 @@
     "stores",
     "storesSecret",
     "storesRevision",
-    "clusterDomain",
     "nodeConfig",
     "autoscaling",
     "lifecycle"
@@ -140,17 +139,13 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "port",
-        "annotations"
+        "port"
       ],
       "properties": {
         "port": {
           "type": "integer",
           "minimum": 1,
           "maximum": 65535
-        },
-        "annotations": {
-          "type": "object"
         }
       }
     },
@@ -393,12 +388,6 @@
     },
     "storesRevision": {
       "type": "string"
-    },
-    "clusterDomain": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 253,
-      "pattern": "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
     },
     "nodeConfig": {
       "type": "object",

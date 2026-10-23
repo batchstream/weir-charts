@@ -4,17 +4,11 @@
 {{- define "weir.fullname" -}}
 {{- default (printf "%s-%s" .Release.Name (include "weir.name" .)) .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
-{{- define "weir.headlessName" -}}
-{{ printf "%s-headless" (include "weir.fullname" . | trunc 54 | trimSuffix "-") }}
-{{- end -}}
 {{- define "weir.metricsName" -}}
 {{ printf "%s-metrics" (include "weir.fullname" . | trunc 55 | trimSuffix "-") }}
 {{- end -}}
 {{- define "weir.group" -}}
 {{ printf "%s/%s" .Release.Namespace .Release.Name }}
-{{- end -}}
-{{- define "weir.address" -}}
-{{ printf "%s.%s.svc.%s" .name .root.Release.Namespace .root.Values.clusterDomain }}
 {{- end -}}
 {{- define "weir.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "weir.name" . }}
