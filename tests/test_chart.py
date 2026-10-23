@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -33,13 +34,20 @@ def render(values=None, success=True, release="weir", namespace="default"):
 
 
 def render_notes(values, release, namespace):
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as handle:
-        json.dump(values, handle)
-        handle.flush()
-        command = ["helm", "install", release, str(ROOT / "charts/weir"), "--namespace", namespace, "--dry-run=client",
-                   "-f", str(ROOT / "tests/values.yaml"), "-f", handle.name]
+    """Render NOTES.txt without a cluster by embedding it in a copied chart."""
+    with tempfile.TemporaryDirectory() as directory:
+        chart = Path(directory) / "weir"
+        shutil.copytree(ROOT / "charts/weir", chart)
+        notes = (chart / "templates/NOTES.txt").read_text()
+        indented = "".join("  " + line for line in notes.splitlines(keepends=True))
+        (chart / "templates/rendered-notes.yaml").write_text("notes: |\n" + indented)
+        values_file = Path(directory) / "values.json"
+        values_file.write_text(json.dumps(values))
+        command = ["helm", "template", release, str(chart), "--namespace", namespace,
+                   "--show-only", "templates/rendered-notes.yaml",
+                   "-f", str(ROOT / "tests/values.yaml"), "-f", str(values_file)]
         result = subprocess.run(command, capture_output=True, text=True, check=True)
-    return result.stdout.split("NOTES:\n", 1)[1]
+    return yaml.safe_load(result.stdout)["notes"]
 
 
 def process_values(stall="30s"):
