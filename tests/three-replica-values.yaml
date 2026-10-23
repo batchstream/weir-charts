@@ -37,8 +37,6 @@ networkPolicy:
     ports:
     - protocol: TCP
       port: 27017
-mesh:
-  name: three-replica
 stores:
 - name: mongo
   backend:

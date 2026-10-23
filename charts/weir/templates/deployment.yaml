@@ -43,9 +43,6 @@ spec:
     metadata:
       labels:
         {{- include "weir.selectorLabels" . | nindent 8 }}
-        {{- if .Values.mesh.enabled }}
-        {{- include "weir.meshLabels" . | nindent 8 }}
-        {{- end }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         weir.batchstream.io/stores-revision: {{ .Values.storesRevision | quote }}
@@ -81,23 +78,10 @@ spec:
           ports:
             - name: grpc
               containerPort: {{ .Values.service.port }}
-            {{- if .Values.mesh.enabled }}
-            - name: peer
-              containerPort: {{ .Values.mesh.port }}
-            {{- end }}
             {{- if .Values.metrics.enabled }}
             - name: metrics
               containerPort: {{ .Values.diagnosticsPort }}
             {{- end }}
-          {{- if .Values.mesh.enabled }}
-          env:
-            - name: POD_IP
-              valueFrom:
-                fieldRef:
-                  fieldPath: status.podIP
-            - name: WEIR_PEER_ADDRESS
-              value: "[$(POD_IP)]:{{ .Values.mesh.port }}"
-          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           {{- if gt (int .Values.preStopDelaySeconds) 0 }}

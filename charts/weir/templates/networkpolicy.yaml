@@ -4,12 +4,6 @@
 {{- if .Values.metrics.enabled }}
 {{- $ingress = concat $ingress .Values.metrics.ingress }}
 {{- end }}
-{{- if .Values.mesh.enabled }}
-{{- $selector := dict "podSelector" (dict "matchLabels" (dict "weir.batchstream.io/mesh" .Values.mesh.name)) }}
-{{- $ports := list (dict "protocol" "TCP" "port" "peer") }}
-{{- $ingress = append $ingress (dict "from" (list $selector) "ports" $ports) }}
-{{- $egress = append $egress (dict "to" (list $selector) "ports" $ports) }}
-{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

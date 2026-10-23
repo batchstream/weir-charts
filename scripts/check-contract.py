@@ -18,7 +18,6 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SCALE_STORES = 50
-SCALE_SEEDS = 50
 SCALE_REPLICAS = 100
 SCALE_MIN_REPLICAS = 50
 
@@ -34,16 +33,13 @@ def render(values, release="weir"):
     return resources
 
 
-def validate_config(binary, resources, directory, pod_ip="127.0.0.1"):
+def validate_config(binary, resources, directory):
     config = next(item for item in resources if item["kind"] == "ConfigMap")
     deployment = next(item for item in resources if item["kind"] == "Deployment")
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     for name in ("node.yaml", "routes.yaml"):
         (directory / name).write_text(config["data"][name])
     environment = dict(os.environ)
-    for entry in container.get("env", []):
-        if entry["name"] == "WEIR_PEER_ADDRESS":
-            environment[entry["name"]] = entry["value"].replace("$(POD_IP)", pod_ip)
     args = [str(directory / Path(arg).name) if arg.startswith("/etc/weir/") else arg
             for arg in container["args"]]
     command = [binary, "check", *args[1:]]
@@ -54,19 +50,18 @@ def validate_config(binary, resources, directory, pod_ip="127.0.0.1"):
 
 
 def process_policy():
-    """Return valid values for every discovery, transport and overload key."""
-    discovery = {"lease": "90s", "sync_interval": "2s", "sync_timeout": "500ms"}
+    """Return valid values for every transport and overload key."""
     timeouts = {"handshake": "5s", "idle": "1m", "stall": "30s"}
     keepalive = {"interval": "30s", "timeout": "5s"}
     transport = {"max_pending_records": 256, "timeouts": timeouts, "keepalive": keepalive}
     memory = {"high_watermark": 85, "low_watermark": 75, "sample_interval": "200ms"}
     overload = {"memory": memory}
-    policy = {"discovery": discovery, "transport": transport, "overload": overload}
+    policy = {"transport": transport, "overload": overload}
     return policy
 
 
 def check_scale(binary, directory):
-    """Validate a group with many Stores, seeds and replicas."""
+    """Validate a group with many Stores and replicas."""
     stores = []
     for index in range(SCALE_STORES):
         backend = {"mongodb": {"uri": "mongodb://127.0.0.1:27017/?directConnection=true"}}
@@ -74,12 +69,9 @@ def check_scale(binary, directory):
             backend = {"search": {"url": "http://127.0.0.1:9200"}}
         store = {"name": "store" + str(index), "backend": backend}
         stores.append(store)
-    seeds = ["peer" + str(index) + ".example:7448" for index in range(SCALE_SEEDS)]
-    mesh = {"seeds": seeds}
-    values = {"stores": stores, "mesh": mesh, "replicaCount": SCALE_REPLICAS}
+    values = {"stores": stores, "replicaCount": SCALE_REPLICAS}
     resources = render(values)
     validate_config(binary, resources, directory)
-    validate_config(binary, resources, directory, "fd00::123")
     metadata = {"timezone": "UTC", "start": "0 8 * * *", "end": "0 18 * * *",
                 "desiredReplicas": str(SCALE_REPLICAS)}
     trigger = {"type": "cron", "metadata": metadata}
@@ -101,9 +93,8 @@ def isolate_runtime(resources, app_port, diagnostic_port):
     node = yaml.safe_load(config["data"]["node.yaml"])
     routes = yaml.safe_load(config["data"]["routes.yaml"])
     if (routes["stores"] or node["listeners"] != {"application": "[::]:" + str(app_port)}
-            or node["discovery"].get("seeds") or node["discovery"].get("peer_address_env")
             or node["diagnostics"]["address"] != "127.0.0.1:" + str(diagnostic_port)):
-        raise RuntimeError("runtime fixture must have no Stores or peers and loopback diagnostics")
+        raise RuntimeError("runtime fixture must have no Stores and loopback diagnostics")
     # Static checks cover the generated wildcard listener. Never expose the live
     # no-Store fixture outside loopback, even on a developer's network.
     node["listeners"]["application"] = "127.0.0.1:" + str(app_port)
@@ -116,12 +107,10 @@ def check_runtime(binary, directory):
     diagnostics = reserve_port()
     app_port = application.getsockname()[1]
     diagnostic_port = diagnostics.getsockname()[1]
-    values = {"mesh": {"enabled": False}, "service": {"port": app_port},
-              "diagnosticsPort": diagnostic_port, "probeTimeoutMilliseconds": 1250}
+    values = {"service": {"port": app_port}, "diagnosticsPort": diagnostic_port,
+              "probeTimeoutMilliseconds": 1250}
     resources = render(values)
     validate_config(binary, resources, directory)
-    if values["mesh"]["enabled"]:
-        raise RuntimeError("runtime fixture must disable the Mesh")
     isolate_runtime(resources, app_port, diagnostic_port)
     container, args, environment = validate_config(binary, resources, directory)
     application.close()
@@ -180,7 +169,6 @@ def main():
         for release, values in fixtures:
             resources = render(values, release)
             validate_config(binary, resources, directory)
-            validate_config(binary, resources, directory, "fd00::123")
             custom = copy.deepcopy(values)
             custom.update(fullnameOverride="custom", clusterDomain="cluster.internal")
             custom["nodeConfig"] = process_policy()
@@ -224,7 +212,7 @@ def main():
             raise RuntimeError("invalid process configuration unexpectedly accepted")
         check_scale(binary, directory)
         check_runtime(binary, directory)
-    print("Contract checks passed: MongoDB/Search configurations, process policy, scale, IPv4/IPv6, "
+    print("Contract checks passed: MongoDB/Search configurations, process policy, scale, "
           "credential files and serve/probes/shutdown")
 
 

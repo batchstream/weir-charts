@@ -25,12 +25,6 @@ lifecycle:
 service:
   port: 7447
   annotations: {}
-mesh:
-  enabled: true
-  name: weir
-  port: 7448
-  # Additional peer endpoints; cross-namespace access needs explicit network rules.
-  seeds: []
 diagnosticsPort: 7449
 # The CLI deadline; kubelet's whole-second timeout is rounded up plus one second.
 probeTimeoutMilliseconds: 750
@@ -87,7 +81,7 @@ networkPolicy:
       ports:
         - protocol: TCP
           port: grpc
-  # Add precise backend destinations and any extra peer endpoints here.
+  # Add precise backend destinations here.
   egress: []
   dns:
     namespaceSelector:

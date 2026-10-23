@@ -32,7 +32,6 @@
     "storesRevision",
     "clusterDomain",
     "nodeConfig",
-    "mesh",
     "autoscaling",
     "lifecycle"
   ],
@@ -491,24 +490,6 @@
             }
           }
         },
-        "discovery": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "lease": {
-              "type": "string",
-              "minLength": 1
-            },
-            "sync_interval": {
-              "type": "string",
-              "minLength": 1
-            },
-            "sync_timeout": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        },
         "diagnostics": {
           "type": "object",
           "additionalProperties": false,
@@ -517,40 +498,6 @@
               "type": "string",
               "minLength": 1
             }
-          }
-        }
-      }
-    },
-    "mesh": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "name",
-        "port",
-        "seeds"
-      ],
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 63,
-          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-        },
-        "port": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "seeds": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 1
           }
         }
       }
