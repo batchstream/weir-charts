@@ -1,7 +1,8 @@
 {{- include "weir.validate" . -}}
-{{- /* Weir bounds startup at 30s; probe it every native 10s period, plus one failure. */ -}}
+{{- /* Weir bounds startup at 30s. The first probe can land anywhere in the first
+native 10s period, so allow two periods beyond that bound. */ -}}
 {{- $nativeProbePeriod := 10 -}}
-{{- $startupFailures := 4 -}}
+{{- $startupFailures := 5 -}}
 {{- $startupBudget := mul $startupFailures $nativeProbePeriod -}}
 {{- $minimumProgress := add (int .Values.minReadySeconds) $startupBudget -}}
 {{- $progress := int .Values.progressDeadlineSeconds -}}

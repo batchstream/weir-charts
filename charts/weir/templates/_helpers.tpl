@@ -48,8 +48,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- $_ := set $names .name true -}}
 {{- $mongodb := default dict .mongodb -}}
 {{- $search := default dict .search -}}
-{{- if or (regexMatch "^[^:]+://[^/?#]*@" (default "" $mongodb.uri)) (regexMatch "^[^:]+://[^/?#]*@" (default "" $search.url)) -}}
-{{- fail "backend URI userinfo is unsupported; use credential-file authentication" -}}
+{{- if or (contains "@" (default "" $mongodb.uri)) (contains "@" (default "" $search.url)) -}}
+{{- fail "backend URIs must not contain @; userinfo is unsupported, use credential-file authentication" -}}
 {{- end -}}
 {{- end -}}
 {{- if and .Values.metrics.enabled (empty .Values.metrics.ingress) .Values.networkPolicy.enabled -}}

@@ -28,7 +28,7 @@ metrics:
           weir-client: 'true'
     ports:
     - protocol: TCP
-      port: 7449
+      port: metrics
 networkPolicy:
   egress:
   - to:

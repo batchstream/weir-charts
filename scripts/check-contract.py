@@ -5,6 +5,7 @@ is an isolated no-Store node on loopback ephemeral ports.
 """
 import argparse
 import copy
+import http.client
 import json
 from pathlib import Path
 import shutil
@@ -94,14 +95,15 @@ def isolate_runtime(resources, app_port, diagnostic_port):
     config["data"]["weir.yaml"] = yaml.safe_dump(document)
 
 
-def healthy(port, probe):
-    """Run one rendered httpGet probe against loopback, bypassing any proxy."""
+def healthy(container, probe):
+    """Run one rendered httpGet probe on its named container port over loopback, bypassing any proxy."""
+    ports = {port["name"]: port["containerPort"] for port in container["ports"]}
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    url = "http://127.0.0.1:" + str(port) + probe["httpGet"]["path"]
+    url = "http://127.0.0.1:" + str(ports[probe["httpGet"]["port"]]) + probe["httpGet"]["path"]
     try:
         with opener.open(url, timeout=1) as response:
             return response.status == 200
-    except (urllib.error.URLError, ConnectionError, TimeoutError):
+    except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError):
         return False
 
 
@@ -124,13 +126,13 @@ def check_runtime(binary, directory):
             print("Isolated no-Store runtime PID " + str(process.pid) + ", loopback ports "
                   + str(app_port) + "/" + str(diagnostic_port), flush=True)
             deadline = time.monotonic() + 10
-            while not healthy(diagnostic_port, container["startupProbe"]):
+            while not healthy(container, container["startupProbe"]):
                 if process.poll() is not None or time.monotonic() >= deadline:
                     output.seek(0)
                     raise RuntimeError("rendered serve/startup probe failed: " + output.read())
                 time.sleep(0.05)
             for name in ("readinessProbe", "livenessProbe"):
-                if not healthy(diagnostic_port, container[name]):
+                if not healthy(container, container[name]):
                     raise RuntimeError("rendered " + name + " failed")
         finally:
             if process.poll() is None:
@@ -190,6 +192,16 @@ def main():
         store["search"]["url"] = "https://search:9200"
         store["authentication"] = {"username_file": "test-user.txt", "password_file": "test-password.txt"}
         validate_config(binary, render(files, "search"), directory)
+        # check reads the referenced files rather than trusting their names.
+        store["authentication"]["password_file"] = "missing-password.txt"
+        try:
+            validate_config(binary, render(files, "search"), directory)
+        except subprocess.CalledProcessError as error:
+            if "credential file unavailable" not in error.stderr:
+                raise RuntimeError("missing credential file rejected for another reason: "
+                                   + error.stderr) from error
+        else:
+            raise RuntimeError("missing credential file unexpectedly accepted")
         # Server validation owns backend semantics beyond the Chart's schema.
         invalid = copy.deepcopy(fixtures[0][1])
         invalid["stores"][0]["mongodb"]["uri"] = "mongodb://mongo/?directConnection=true"

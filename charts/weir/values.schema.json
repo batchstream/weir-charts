@@ -295,21 +295,31 @@
           "authentication": {
             "type": "object",
             "additionalProperties": false,
+            "required": [
+              "username_file",
+              "password_file"
+            ],
             "properties": {
               "username_file": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "password_file": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               }
             }
           },
           "tls": {
             "type": "object",
             "additionalProperties": false,
+            "required": [
+              "ca_file"
+            ],
             "properties": {
               "ca_file": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               }
             }
           },

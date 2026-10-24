@@ -167,7 +167,10 @@ class ChartTests(unittest.TestCase):
     def test_metrics_generate_listener_and_one_per_pod_monitor(self):
         values = yaml.safe_load((ROOT / "examples/prometheus-autoscaling.yaml").read_text())
         resources = render(values, release="mongo", namespace="application")
-        self.assertEqual(weir_config(resources)["listeners"]["diagnostics"], "[::]:7449")
+        self.assertIn("mongo-weir-metrics", resources["Services"])
+        disabled = render(dict(values, metrics={"enabled": False}, autoscaling={"enabled": False}, podDisruptionBudget={"enabled": False}), release="mongo", namespace="application")
+        self.assertNotIn("mongo-weir-metrics", disabled["Services"])
+        self.assertEqual(len(disabled["NetworkPolicy"]["spec"]["ingress"]), len(resources["NetworkPolicy"]["spec"]["ingress"]) - len(values["metrics"]["ingress"]))
         monitor = resources["ServiceMonitor"]["spec"]
         selector = monitor["selector"]["matchLabels"]
         selected = [service for service in resources["Services"].values()
@@ -185,6 +188,7 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(resources["ServiceMonitor"]["metadata"]["labels"]["release"], "monitoring")
         ingress = resources["NetworkPolicy"]["spec"]["ingress"]
         self.assertEqual(ingress[-len(values["metrics"]["ingress"]):], values["metrics"]["ingress"])
+        self.assertEqual(ingress[-1]["ports"], [{"protocol": "TCP", "port": "metrics"}])
 
     def test_keda_controls_replica_count_and_preserves_standard_triggers(self):
         values = yaml.safe_load((ROOT / "examples/prometheus-autoscaling.yaml").read_text())
@@ -249,9 +253,9 @@ class ChartTests(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("must exceed", rejected.stderr)
 
-        values = {"progressDeadlineSeconds": 56}
-        self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 56)
-        values["progressDeadlineSeconds"] = 55
+        values = {"progressDeadlineSeconds": 66}
+        self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 66)
+        values["progressDeadlineSeconds"] = 65
         self.assertNotEqual(render(values, success=False).returncode, 0)
 
     def test_shutdown_timeout_drives_weir_and_pod_grace(self):
@@ -259,8 +263,11 @@ class ChartTests(unittest.TestCase):
         resources = render(values)
         deployment = resources["Deployment"]["spec"]
         pod = deployment["template"]["spec"]
-        # Weir's fixed 30s startup bound fits within the startup probe budget.
-        self.assertGreater(pod["containers"][0]["startupProbe"]["failureThreshold"] * 10, 30)
+        # The first probe can land at once, so even the earliest kill must
+        # follow Weir's fixed 30s startup bound with a full period to spare.
+        threshold = pod["containers"][0]["startupProbe"]["failureThreshold"]
+        self.assertEqual(threshold, 5)
+        self.assertGreater((threshold - 1) * 10, 30)
         self.assertEqual(pod["terminationGracePeriodSeconds"], 153)
         self.assertEqual(weir_config(resources)["shutdown_timeout"], "120s")
 
@@ -299,11 +306,19 @@ class ChartTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, "")
             self.assertIn("Additional property", result.stderr)
-        for adapter, field, uri in (("mongodb", "uri", "mongodb://user:password@mongo:27017"), ("search", "url", "https://user:password@search:9200")):
-            invalid = {"stores": [{"name": "store", adapter: {field: uri}}]}
-            self.assertIn("userinfo is unsupported", render(invalid, success=False).stderr)
-        allowed = {"stores": [{"name": "mongo", "mongodb": {"uri": "mongodb://mongo:27017/?appName=weir@example"}}]}
-        self.assertIn("weir@example", render(allowed)["ConfigMap"]["data"]["weir.yaml"])
+        for adapter, field, uri in (
+                ("mongodb", "uri", "mongodb://user:password@mongo:27017"),
+                ("mongodb", "uri", "mongodb://admin:p#ss@mongo:27017/?directConnection=true"),
+                ("mongodb", "uri", "mongodb://admin:p?ss@mongo:27017/"),
+                ("mongodb", "uri", "mongodb://admin:p/ss@mongo:27017/"),
+                ("mongodb", "uri", "mongodb://admin:p/?ss@mongo:27017/"),
+                ("search", "url", "https://user:password@search:9200"),
+                ("search", "url", "https://user:p#ss@search:9200")):
+            with self.subTest(uri=uri):
+                invalid = {"stores": [{"name": "store", adapter: {field: uri}}]}
+                result = render(invalid, success=False)
+                self.assertIn("userinfo is unsupported", result.stderr)
+                self.assertNotIn("ss@", result.stderr)
         invalid = {"extraVolumeMounts": [{"name": "extra", "mountPath": "/extra", "readOnly": False}]}
         self.assertNotEqual(render(invalid, success=False).returncode, 0)
 
@@ -315,7 +330,10 @@ class ChartTests(unittest.TestCase):
             {"mongodb": mongo, "unexpected": {}},
             {"mongodb": mongo, "search": {"url": "http://search:9200"}},
             {"mongodb": mongo, "batching": {"unexpected": 1}},
-            {"authentication": {"username_file": "/auth/username"}},
+            {"mongodb": mongo, "authentication": {"username_file": "/auth/username"}},
+            {"mongodb": mongo, "authentication": {"password_file": "/auth/password"}},
+            {"mongodb": mongo, "authentication": {"username_file": "", "password_file": "/auth/password"}},
+            {"mongodb": mongo, "tls": {}},
         ]
         for store in stores:
             with self.subTest(store=store):
