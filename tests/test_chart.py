@@ -50,9 +50,8 @@ def render_notes(values, release, namespace):
     return yaml.safe_load(result.stdout)["notes"]
 
 
-def process_values(stall="30s"):
-    values = {"nodeConfig": {"transport": {"timeouts": {"stall": stall}}}}
-    return values
+def weir_config(resources):
+    return yaml.safe_load(resources["ConfigMap"]["data"]["weir.yaml"])
 
 
 def strict_object_paths(schema, path=()):
@@ -92,22 +91,18 @@ class ChartTests(unittest.TestCase):
         self.assertNotIn("Secret", resources)
         self.assertNotIn("ServiceAccount", resources)
         self.assertEqual(len(pod["containers"]), 1)
-        sources = pod["volumes"][0]["projected"]["sources"]
-        self.assertEqual(sources[0]["configMap"]["name"], "weir-weir")
-        self.assertEqual(container["args"], ["serve", "--config", "/etc/weir/node.yaml", "--routes", "/etc/weir/routes.yaml"])
-        for name in ("startupProbe", "readinessProbe", "livenessProbe"):
-            command = container[name]["exec"]["command"]
-            self.assertEqual(command[:2], ["/weir", "probe"])
-            self.assertEqual(command[-1], "127.0.0.1:7449")
+        self.assertEqual(pod["volumes"][0]["configMap"]["name"], "weir-weir")
+        self.assertEqual(container["args"], ["serve", "--config", "/etc/weir/weir.yaml"])
+        for name, path in (("startupProbe", "/readyz"), ("readinessProbe", "/readyz"), ("livenessProbe", "/livez")):
+            self.assertEqual(container[name]["httpGet"], {"path": path, "port": "metrics"})
             self.assertNotIn("periodSeconds", container[name])
+            self.assertNotIn("timeoutSeconds", container[name])
         self.assertNotIn("failureThreshold", container["readinessProbe"])
         self.assertNotIn("failureThreshold", container["livenessProbe"])
         self.assertNotIn("revisionHistoryLimit", resources["Deployment"]["spec"])
         self.assertIn("@sha256:", container["image"])
-        node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
-        self.assertEqual(node["listeners"], {"application": "[::]:7447"})
-        self.assertEqual(node["diagnostics"]["address"], "127.0.0.1:7449")
-        self.assertEqual(yaml.safe_load(resources["ConfigMap"]["data"]["routes.yaml"])["stores"], [])
+        listeners = {"application": "[::]:7447", "diagnostics": "[::]:7449"}
+        self.assertEqual(weir_config(resources), {"listeners": listeners, "shutdown_timeout": "5s", "stores": []})
 
     def test_group_services_select_only_their_release(self):
         first = render(release="mongo", namespace="application")
@@ -132,41 +127,29 @@ class ChartTests(unittest.TestCase):
         container_ports = resources["Deployment"]["spec"]["template"]["spec"]["containers"][0]["ports"]
         self.assertEqual(next(port["containerPort"] for port in container_ports if port["name"] == "grpc"), 7557)
 
-    def test_configuration_rolls_and_external_secret_supplies_only_routes(self):
-        first, second = process_values("30s"), process_values("20s")
-        a, b = render(first), render(second)
-        node = yaml.safe_load(a["ConfigMap"]["data"]["node.yaml"])
-        self.assertEqual(node["transport"]["timeouts"]["stall"], "30s")
+    def test_configuration_changes_roll_pods(self):
+        a, b = render({"shutdownTimeoutSeconds": 5}), render({"shutdownTimeoutSeconds": 9})
+        self.assertEqual(weir_config(b)["shutdown_timeout"], "9s")
         checksum_a = a["Deployment"]["spec"]["template"]["metadata"]["annotations"]["checksum/config"]
         checksum_b = b["Deployment"]["spec"]["template"]["metadata"]["annotations"]["checksum/config"]
         self.assertNotEqual(checksum_a, checksum_b)
-        secret_values = {"storesSecret": "approved-v2", "storesRevision": "v2"}
-        secret = render(secret_values)
-        self.assertNotIn("routes.yaml", secret["ConfigMap"]["data"])
-        self.assertIn("node.yaml", secret["ConfigMap"]["data"])
-        sources = secret["Deployment"]["spec"]["template"]["spec"]["volumes"][0]["projected"]["sources"]
-        self.assertEqual(sources[0]["configMap"]["items"][0]["key"], "node.yaml")
-        self.assertEqual(sources[1]["secret"]["name"], "approved-v2")
-        self.assertEqual(len(sources[1]["secret"]["items"]), 1)
-        self.assertEqual(sources[1]["secret"]["items"][0]["key"], "routes.yaml")
-        self.assertEqual(secret["Deployment"]["spec"]["template"]["metadata"]["annotations"]["weir.batchstream.io/stores-revision"], "v2")
-        store_values = {"stores": [{"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017"}}}]}
+        store_values = {"stores": [{"name": "mongo", "mongodb": {"uri": "mongodb://mongo:27017"}}]}
         changed = render(store_values)
         self.assertNotEqual(checksum_a, changed["Deployment"]["spec"]["template"]["metadata"]["annotations"]["checksum/config"])
-        self.assertNotIn("Secret", secret)
+        self.assertNotIn("Secret", changed)
 
     def test_derived_identity_and_addresses_follow_ports_and_overrides(self):
         values = {"fullnameOverride": "custom", "service": {"port": 7557}, "diagnosticsPort": 7559}
         resources = render(values, release="payments", namespace="backend")
-        node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
-        self.assertEqual(node["listeners"], {"application": "[::]:7557"})
-        self.assertEqual(node["diagnostics"]["address"], "127.0.0.1:7559")
+        self.assertEqual(weir_config(resources)["listeners"], {"application": "[::]:7557", "diagnostics": "[::]:7559"})
         self.assertEqual(set(resources["Services"]), {"custom"})
         notes = render_notes(values, release="payments", namespace="backend")
         self.assertIn("SDK address (weir.New), resolving to this group's Ready Pods:\ncustom.backend.svc:7557\n", notes)
         pod = resources["Deployment"]["spec"]["template"]["spec"]
         self.assertNotIn("env", pod["containers"][0])
-        self.assertEqual(pod["containers"][0]["readinessProbe"]["exec"]["command"][-1], "127.0.0.1:7559")
+        ports = {port["name"]: port["containerPort"] for port in pod["containers"][0]["ports"]}
+        self.assertEqual(ports, {"grpc": 7557, "metrics": 7559})
+        self.assertEqual(pod["containers"][0]["readinessProbe"]["httpGet"]["port"], "metrics")
 
     def test_three_replicas_keep_retirement_and_disruption_guards(self):
         values = {"replicaCount": 3, "podDisruptionBudget": {"enabled": True}}
@@ -184,9 +167,7 @@ class ChartTests(unittest.TestCase):
     def test_metrics_generate_listener_and_one_per_pod_monitor(self):
         values = yaml.safe_load((ROOT / "examples/prometheus-autoscaling.yaml").read_text())
         resources = render(values, release="mongo", namespace="application")
-        node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
-        self.assertEqual(node["diagnostics"]["address"], "[::]:7449")
-        self.assertTrue(node["diagnostics"]["allow_intranet"])
+        self.assertEqual(weir_config(resources)["listeners"]["diagnostics"], "[::]:7449")
         monitor = resources["ServiceMonitor"]["spec"]
         selector = monitor["selector"]["matchLabels"]
         selected = [service for service in resources["Services"].values()
@@ -228,13 +209,11 @@ class ChartTests(unittest.TestCase):
     def test_many_stores_and_replicas_render(self):
         stores = []
         for index in range(CONTRACT.SCALE_STORES):
-            backend = {"mongodb": {"uri": "mongodb://127.0.0.1:27017"}}
-            store = {"name": "store" + str(index), "backend": backend}
+            store = {"name": "store" + str(index), "mongodb": {"uri": "mongodb://127.0.0.1:27017"}}
             stores.append(store)
         values = {"stores": stores, "replicaCount": CONTRACT.SCALE_REPLICAS}
         resources = render(values)
-        routes = yaml.safe_load(resources["ConfigMap"]["data"]["routes.yaml"])
-        self.assertEqual(routes["stores"], stores)
+        self.assertEqual(weir_config(resources)["stores"], stores)
         self.assertEqual(resources["Deployment"]["spec"]["replicas"], CONTRACT.SCALE_REPLICAS)
         metadata = {"timezone": "UTC", "start": "0 8 * * *", "end": "0 18 * * *",
                     "desiredReplicas": str(CONTRACT.SCALE_REPLICAS)}
@@ -270,66 +249,39 @@ class ChartTests(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("must exceed", rejected.stderr)
 
-        values = {"progressDeadlineSeconds": 36}
-        self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 36)
-        values["progressDeadlineSeconds"] = 35
+        values = {"progressDeadlineSeconds": 56}
+        self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 56)
+        values["progressDeadlineSeconds"] = 55
         self.assertNotEqual(render(values, success=False).returncode, 0)
 
-    def test_process_lifecycle_drives_startup_and_shutdown_budgets(self):
-        lifecycle = {"startupTimeoutSeconds": 300, "shutdownTimeoutSeconds": 120, "cleanupTimeoutSeconds": 10}
-        values = {"lifecycle": lifecycle, "preStopDelaySeconds": 30, "progressDeadlineSeconds": 600}
+    def test_shutdown_timeout_drives_weir_and_pod_grace(self):
+        values = {"shutdownTimeoutSeconds": 120, "preStopDelaySeconds": 30}
         resources = render(values)
         deployment = resources["Deployment"]["spec"]
         pod = deployment["template"]["spec"]
-        probe = pod["containers"][0]["startupProbe"]
-        startup_budget = probe["failureThreshold"] * 10
-        self.assertGreater(startup_budget, 300)
-        self.assertGreater(deployment["progressDeadlineSeconds"], startup_budget + deployment["minReadySeconds"])
-        self.assertEqual(pod["terminationGracePeriodSeconds"], 161)
-        node = yaml.safe_load(resources["ConfigMap"]["data"]["node.yaml"])
-        expected_lifecycle = {"startup_timeout": "300s", "shutdown_timeout": "120s", "cleanup_timeout": "10s"}
-        self.assertEqual(node["lifecycle"], expected_lifecycle)
+        # Weir's fixed 30s startup bound fits within the startup probe budget.
+        self.assertGreater(pod["containers"][0]["startupProbe"]["failureThreshold"] * 10, 30)
+        self.assertEqual(pod["terminationGracePeriodSeconds"], 153)
+        self.assertEqual(weir_config(resources)["shutdown_timeout"], "120s")
 
         values["terminationGracePeriodSeconds"] = 180
         self.assertEqual(render(values)["Deployment"]["spec"]["template"]["spec"]["terminationGracePeriodSeconds"], 180)
-        values["terminationGracePeriodSeconds"] = 160
+        values["terminationGracePeriodSeconds"] = 152
         rejected = render(values, success=False)
         self.assertNotEqual(rejected.returncode, 0)
-        self.assertIn("at least 161", rejected.stderr)
+        self.assertIn("at least 153", rejected.stderr)
 
-    def test_lifecycle_profile_uses_native_integer_seconds(self):
-        for field in ("startupTimeoutSeconds", "shutdownTimeoutSeconds", "cleanupTimeoutSeconds"):
-            for seconds in (0, -5, 1.5, "5s", 9223372037):
-                with self.subTest(field=field, seconds=seconds):
-                    values = {"lifecycle": {field: seconds}}
-                    rejected = render(values, success=False)
-                    self.assertNotEqual(rejected.returncode, 0)
-                    self.assertIn(field, rejected.stderr)
-                    self.assertEqual(rejected.stdout, "")
+    def test_shutdown_timeout_uses_native_integer_seconds(self):
+        for seconds in (0, -5, 1.5, "5s", 9223372037):
+            with self.subTest(seconds=seconds):
+                values = {"shutdownTimeoutSeconds": seconds}
+                rejected = render(values, success=False)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("shutdownTimeoutSeconds", rejected.stderr)
+                self.assertEqual(rejected.stdout, "")
 
-        values = {"lifecycle": {"shutdownTimeoutSeconds": 1000000000}}
-        node = yaml.safe_load(render(values)["ConfigMap"]["data"]["node.yaml"])
-        self.assertEqual(node["lifecycle"]["shutdown_timeout"], "1000000000s")
-
-    def test_probe_deadline_drives_cli_and_kubelet_timeout(self):
-        values = {"probeTimeoutMilliseconds": 1500}
-        container = render(values)["Deployment"]["spec"]["template"]["spec"]["containers"][0]
-        for name in ("startupProbe", "readinessProbe", "livenessProbe"):
-            probe = container[name]
-            command = probe["exec"]["command"]
-            self.assertEqual(command[command.index("--timeout") + 1], "1500ms")
-            self.assertEqual(probe["timeoutSeconds"], 3)
-
-        values["probeTimeoutMilliseconds"] = 90000
-        rejected = render(values, success=False)
-        self.assertNotEqual(rejected.returncode, 0)
-        self.assertIn("progressDeadlineSeconds must exceed", rejected.stderr)
-        values["progressDeadlineSeconds"] = 200
-        deployment = render(values)["Deployment"]["spec"]
-        probe = deployment["template"]["spec"]["containers"][0]["startupProbe"]
-        startup_budget = probe["timeoutSeconds"] * probe["failureThreshold"]
-        self.assertEqual(deployment["progressDeadlineSeconds"], 200)
-        self.assertGreater(deployment["progressDeadlineSeconds"], startup_budget + deployment["minReadySeconds"])
+        values = {"shutdownTimeoutSeconds": 1000000000}
+        self.assertEqual(weir_config(render(values))["shutdown_timeout"], "1000000000s")
 
     def test_promtool_regression_uses_the_actual_autoscaling_example_query(self):
         example = yaml.safe_load((ROOT / "examples/prometheus-autoscaling.yaml").read_text())
@@ -341,56 +293,53 @@ class ChartTests(unittest.TestCase):
 
     def test_inline_auth_userinfo_and_writable_mounts_are_rejected(self):
         for adapter, endpoint in (("mongodb", {"uri": "mongodb://mongo:27017"}), ("search", {"url": "https://search:9200"})):
-            backend = {adapter: endpoint, "authentication": {"username": "test-user", "password": "test-password"}}
-            invalid = {"stores": [{"name": adapter, "backend": backend}]}
+            store = {"name": adapter, adapter: endpoint, "authentication": {"username": "test-user", "password": "test-password"}}
+            invalid = {"stores": [store]}
             result = render(invalid, success=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(result.stdout, "")
             self.assertIn("Additional property", result.stderr)
         for adapter, field, uri in (("mongodb", "uri", "mongodb://user:password@mongo:27017"), ("search", "url", "https://user:password@search:9200")):
-            invalid = {"stores": [{"name": "store", "backend": {adapter: {field: uri}}}]}
+            invalid = {"stores": [{"name": "store", adapter: {field: uri}}]}
             self.assertIn("userinfo is unsupported", render(invalid, success=False).stderr)
-        allowed = {"stores": [{"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017/?appName=weir@example"}}}]}
-        self.assertIn("weir@example", render(allowed)["ConfigMap"]["data"]["routes.yaml"])
+        allowed = {"stores": [{"name": "mongo", "mongodb": {"uri": "mongodb://mongo:27017/?appName=weir@example"}}]}
+        self.assertIn("weir@example", render(allowed)["ConfigMap"]["data"]["weir.yaml"])
         invalid = {"extraVolumeMounts": [{"name": "extra", "mountPath": "/extra", "readOnly": False}]}
         self.assertNotEqual(render(invalid, success=False).returncode, 0)
 
-    def test_backend_configuration_rejects_unknown_structure(self):
-        backends = [
+    def test_store_configuration_rejects_unknown_structure(self):
+        mongo = {"uri": "mongodb://mongo:27017"}
+        stores = [
             {"mongodb": {"uri": "mongodb://mongo:27017", "unexpected": True}},
             {"search": {"url": "https://search:9200", "unexpected": None}},
-            {"search": {"url": "https://search:9200", "pit_keep_alive": "90s"}},
-            {"mongodb": {"uri": "mongodb://mongo:27017"}, "unexpected": {}},
-            {"mongodb": {"uri": "mongodb://mongo:27017"}, "search": {"url": "http://search:9200"}},
+            {"mongodb": mongo, "unexpected": {}},
+            {"mongodb": mongo, "search": {"url": "http://search:9200"}},
+            {"mongodb": mongo, "batching": {"unexpected": 1}},
             {"authentication": {"username_file": "/auth/username"}},
         ]
-        for backend in backends:
-            invalid = {"stores": [{"name": "store", "backend": backend}]}
-            result = render(invalid, success=False)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, "")
+        for store in stores:
+            with self.subTest(store=store):
+                invalid = {"stores": [dict(store, name="store")]}
+                result = render(invalid, success=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
 
-    def test_adapter_settings_are_passed_directly_without_default_overrides(self):
-        mongo = {"uri": "mongodb://mongo:27017", "max_connecting": 3, "metadata_cache_entries": 0,
-                 "retry_attempts": 2, "retry_backoff": "0s"}
-        search = {"url": "http://search:9200", "retry_attempts": 1,
-                  "idle_timeout": "0s"}
-        stores = [{"name": "mongo", "backend": {"mongodb": mongo}},
-                  {"name": "search", "backend": {"search": search}}]
+    def test_batching_settings_pass_through_without_default_overrides(self):
+        stores = [{"name": "mongo", "mongodb": {"uri": "mongodb://mongo:27017"}, "batching": CONTRACT.batching_policy()},
+                  {"name": "search", "search": {"url": "http://search:9200"}, "batching": {"max_wait": "5ms"}}]
         values = {"stores": stores}
-        routes = yaml.safe_load(render(values)["ConfigMap"]["data"]["routes.yaml"])
-        self.assertEqual(routes["stores"], stores)
+        self.assertEqual(weir_config(render(values))["stores"], stores)
 
     def test_common_file_authentication_is_rendered_for_both_backends(self):
         stores = []
         for adapter, endpoint in (("mongodb", {"uri": "mongodb://mongo:27017/?authSource=admin&authMechanism=SCRAM-SHA-256&tls=true"}),
                                   ("search", {"url": "https://search:9200"})):
-            backend = {adapter: endpoint, "authentication": {"username_file": "/auth/username", "password_file": "/auth/password"},
-                       "tls": {"ca_file": "/auth/ca.crt"}}
-            stores.append({"name": adapter, "backend": backend})
+            store = {"name": adapter, adapter: endpoint,
+                     "authentication": {"username_file": "/auth/username", "password_file": "/auth/password"},
+                     "tls": {"ca_file": "/auth/ca.crt"}}
+            stores.append(store)
         values = {"stores": stores}
-        routes = yaml.safe_load(render(values)["ConfigMap"]["data"]["routes.yaml"])
-        self.assertEqual(routes["stores"], stores)
+        self.assertEqual(weir_config(render(values))["stores"], stores)
 
     def test_three_replica_overlay_excludes_untolerated_nodes_from_spread(self):
         values = yaml.safe_load((ROOT / "examples/three-replicas.yaml").read_text())
@@ -417,23 +366,21 @@ class ChartTests(unittest.TestCase):
         config = render()["ConfigMap"]
         resources = [copy.deepcopy(config)]
         CONTRACT.isolate_runtime(resources, 7447, 7449)
-        node = yaml.safe_load(resources[0]["data"]["node.yaml"])
-        isolated_listeners = {"application": "127.0.0.1:7447"}
-        generated_listeners = {"application": "[::]:7447"}
-        self.assertEqual(node["listeners"], isolated_listeners)
-        self.assertEqual(node["diagnostics"]["address"], "127.0.0.1:7449")
-        self.assertEqual(yaml.safe_load(config["data"]["node.yaml"])["listeners"], generated_listeners)
+        isolated = yaml.safe_load(resources[0]["data"]["weir.yaml"])
+        self.assertEqual(isolated["listeners"], {"application": "127.0.0.1:7447", "diagnostics": "127.0.0.1:7449"})
+        generated = yaml.safe_load(config["data"]["weir.yaml"])
+        self.assertEqual(generated["listeners"], {"application": "[::]:7447", "diagnostics": "[::]:7449"})
         for case in ("stores", "listener", "diagnostics"):
             with self.subTest(case=case):
                 unsafe = copy.deepcopy(config)
-                node = yaml.safe_load(unsafe["data"]["node.yaml"])
+                document = yaml.safe_load(unsafe["data"]["weir.yaml"])
                 if case == "stores":
-                    unsafe["data"]["routes.yaml"] = "stores: [{name: forbidden}]"
+                    document["stores"] = [{"name": "forbidden"}]
                 elif case == "listener":
-                    node["listeners"]["extra"] = "127.0.0.1:7448"
+                    document["listeners"]["extra"] = "127.0.0.1:7448"
                 else:
-                    node["diagnostics"]["address"] = "[::]:7449"
-                unsafe["data"]["node.yaml"] = yaml.safe_dump(node)
+                    document["listeners"]["diagnostics"] = "[::]:7450"
+                unsafe["data"]["weir.yaml"] = yaml.safe_dump(document)
                 resources = [unsafe]
                 with self.assertRaises(RuntimeError):
                     CONTRACT.isolate_runtime(resources, 7447, 7449)
@@ -456,7 +403,7 @@ class ChartTests(unittest.TestCase):
                     for listener in released:
                         listener.__enter__.return_value = listener
                     resources = []
-                    validation = ({}, ["serve"], {})
+                    validation = ({}, ["serve"])
                     directory = Path("/unused-mocked-runtime")
                     with (
                         mock.patch.object(CONTRACT, "reserve_port", side_effect=reservations),
@@ -465,7 +412,7 @@ class ChartTests(unittest.TestCase):
                         mock.patch.object(CONTRACT, "isolate_runtime"),
                         mock.patch.object(CONTRACT.tempfile, "TemporaryFile"),
                         mock.patch.object(CONTRACT.subprocess, "Popen", return_value=process) as popen,
-                        mock.patch.object(CONTRACT.subprocess, "run") as probe,
+                        mock.patch.object(CONTRACT, "healthy") as probe,
                         mock.patch.object(CONTRACT.socket, "socket", side_effect=released),
                         mock.patch("builtins.print", side_effect=print_failures),
                     ):
@@ -524,8 +471,8 @@ class ChartTests(unittest.TestCase):
     def test_unknown_keys_are_rejected_in_every_strict_object(self):
         schema = json.loads((ROOT / "charts/weir/values.schema.json").read_text())
         paths = strict_object_paths(schema)
-        expected = [(), ("image",), ("nodeConfig", "transport", "timeouts"), ("stores", "[]", "backend", "tls"),
-                    ("autoscaling", "scaleDown", "policies", "[]"), ("lifecycle",)]
+        expected = [(), ("image",), ("stores", "[]"), ("stores", "[]", "tls"), ("stores", "[]", "batching"),
+                    ("autoscaling", "scaleDown", "policies", "[]")]
         for path in expected:
             self.assertIn(path, paths)
         for path in paths:
@@ -537,15 +484,8 @@ class ChartTests(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
                 self.assertIn("unknownSetting", result.stderr)
 
-    def test_process_policy_keys_pass_through(self):
-        values = {"nodeConfig": CONTRACT.process_policy()}
-        node = yaml.safe_load(render(values)["ConfigMap"]["data"]["node.yaml"])
-        for name, policy in values["nodeConfig"].items():
-            for key, value in policy.items():
-                self.assertEqual(node[name][key], value)
-
     def test_invalid_values_fail_before_cluster_mutation(self):
-        store = {"name": "mongo", "backend": {"mongodb": {"uri": "mongodb://mongo:27017"}}}
+        store = {"name": "mongo", "mongodb": {"uri": "mongodb://mongo:27017"}}
         trigger = {"type": "cron", "metadata": {"timezone": "UTC"}}
         cases = [
             {"metrics": {"enabled": True}}, {"metrics": {"serviceMonitor": {"enabled": True}}},
@@ -554,16 +494,10 @@ class ChartTests(unittest.TestCase):
             {"minReadySeconds": -1}, {"minReadySeconds": 2147483646}, {"minReadySeconds": 2147483647}, {"terminationGracePeriodSeconds": 20},
             {"progressDeadlineSeconds": 0}, {"progressDeadlineSeconds": 2147483648},
             {"preStopDelaySeconds": -1}, {"image": {"digest": "sha256:bad"}}, {"image": {"digest": ""}},
-            {"probeTimeoutMilliseconds": 0}, {"probeTimeoutMilliseconds": 1.5},
-            {"probeTimeoutMilliseconds": 2147483646001},
+            {"shutdownTimeoutSeconds": 0},
             {"podAnnotations": {"weir.batchstream.io/source-revision": "unverified"}},
-            {"nodeConfig": {"listeners": {}}},
-            {"nodeConfig": {"lifecycle": {}}},
-            {"nodeConfig": {"transport": {"timeouts": {"stall": 30}}}},
-            {"nodeConfig": {"overload": {"memory": {"high_watermark": 101}}}},
-            {"nodeConfig": {"diagnostics": {"address": "127.0.0.1:1234"}}},
-            {"nodeConfig": {"diagnostics": {"allow_intranet": True}}},
-            {"stores": [store, store]}, {"stores": [store], "storesSecret": "external"},
+            {"podAnnotations": {"checksum/config": "unverified"}},
+            {"stores": [store, store]},
             {"autoscaling": {"enabled": True}}, {"autoscaling": {"minReplicaCount": 0}},
             {"autoscaling": {"enabled": True, "minReplicaCount": 3, "maxReplicaCount": 2, "triggers": [trigger]}},
             {"podDisruptionBudget": {"enabled": True}},

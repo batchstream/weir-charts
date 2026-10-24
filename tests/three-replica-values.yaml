@@ -39,6 +39,5 @@ networkPolicy:
       port: 27017
 stores:
 - name: mongo
-  backend:
-    mongodb:
-      uri: mongodb://10.0.0.10:27017/?directConnection=true
+  mongodb:
+    uri: mongodb://10.0.0.10:27017/?directConnection=true

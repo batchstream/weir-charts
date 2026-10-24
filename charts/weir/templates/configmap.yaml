@@ -6,10 +6,5 @@ metadata:
   labels:
     {{- include "weir.labels" . | nindent 4 }}
 data:
-  node.yaml: |
-    {{- include "weir.node" . | nindent 4 }}
-  {{- if not .Values.storesSecret }}
-  routes.yaml: |
-    stores:
-      {{- .Values.stores | toYaml | nindent 6 }}
-  {{- end }}
+  weir.yaml: |
+    {{- include "weir.config" . | nindent 4 }}

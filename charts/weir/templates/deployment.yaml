@@ -1,22 +1,18 @@
 {{- include "weir.validate" . -}}
-{{- $startup := int .Values.lifecycle.startupTimeoutSeconds -}}
-{{- $probeMilliseconds := int .Values.probeTimeoutMilliseconds -}}
-{{- $probeTimeout := printf "%dms" $probeMilliseconds -}}
-{{- $probeSeconds := add (div (add $probeMilliseconds 999) 1000) 1 -}}
+{{- /* Weir bounds startup at 30s; probe it every native 10s period, plus one failure. */ -}}
 {{- $nativeProbePeriod := 10 -}}
-{{- $startupFailures := add (div (add $startup (sub $nativeProbePeriod 1)) $nativeProbePeriod) 1 -}}
-{{- $startupBudget := mul $startupFailures (max $nativeProbePeriod $probeSeconds) -}}
+{{- $startupFailures := 4 -}}
+{{- $startupBudget := mul $startupFailures $nativeProbePeriod -}}
 {{- $minimumProgress := add (int .Values.minReadySeconds) $startupBudget -}}
 {{- $progress := int .Values.progressDeadlineSeconds -}}
 {{- if le $progress $minimumProgress -}}
 {{- fail (printf "progressDeadlineSeconds must exceed minReadySeconds plus the derived startup probe budget (%d seconds)" $minimumProgress) -}}
 {{- end -}}
-{{- $shutdown := int .Values.lifecycle.shutdownTimeoutSeconds -}}
-{{- $cleanup := int .Values.lifecycle.cleanupTimeoutSeconds -}}
-{{- $minimumGrace := add (int .Values.preStopDelaySeconds) $shutdown $cleanup 1 -}}
+{{- /* Weir gives each Store a fixed 2s cleanup after the shutdown drain. */ -}}
+{{- $minimumGrace := add (int .Values.preStopDelaySeconds) (int .Values.shutdownTimeoutSeconds) 2 1 -}}
 {{- $grace := int (default $minimumGrace .Values.terminationGracePeriodSeconds) -}}
 {{- if lt $grace $minimumGrace -}}
-{{- fail (printf "terminationGracePeriodSeconds must be 0 (automatic) or at least %d: preStopDelaySeconds + shutdownTimeoutSeconds + cleanupTimeoutSeconds + one second for final exit" $minimumGrace) -}}
+{{- fail (printf "terminationGracePeriodSeconds must be 0 (automatic) or at least %d: preStopDelaySeconds + shutdownTimeoutSeconds + 2s Store cleanup + one second for final exit" $minimumGrace) -}}
 {{- end -}}
 apiVersion: apps/v1
 kind: Deployment
@@ -45,7 +41,6 @@ spec:
         {{- include "weir.selectorLabels" . | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-        weir.batchstream.io/stores-revision: {{ .Values.storesRevision | quote }}
         weir.batchstream.io/source-revision: {{ index .Chart.Annotations "weir.batchstream.io/source-revision" | quote }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -69,7 +64,7 @@ spec:
         - name: weir
           image: {{ include "weir.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["serve", "--config", "/etc/weir/node.yaml", "--routes", "/etc/weir/routes.yaml"]
+          args: ["serve", "--config", "/etc/weir/weir.yaml"]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -78,10 +73,8 @@ spec:
           ports:
             - name: grpc
               containerPort: {{ .Values.service.port }}
-            {{- if .Values.metrics.enabled }}
             - name: metrics
               containerPort: {{ .Values.diagnosticsPort }}
-            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           {{- if gt (int .Values.preStopDelaySeconds) 0 }}
@@ -91,18 +84,18 @@ spec:
                 seconds: {{ .Values.preStopDelaySeconds }}
           {{- end }}
           startupProbe:
-            exec:
-              command: ["/weir", "probe", "ready", "--timeout", {{ $probeTimeout | quote }}, "--address", "127.0.0.1:{{ .Values.diagnosticsPort }}"]
-            timeoutSeconds: {{ $probeSeconds }}
+            httpGet:
+              path: /readyz
+              port: metrics
             failureThreshold: {{ $startupFailures }}
           readinessProbe:
-            exec:
-              command: ["/weir", "probe", "ready", "--timeout", {{ $probeTimeout | quote }}, "--address", "127.0.0.1:{{ .Values.diagnosticsPort }}"]
-            timeoutSeconds: {{ $probeSeconds }}
+            httpGet:
+              path: /readyz
+              port: metrics
           livenessProbe:
-            exec:
-              command: ["/weir", "probe", "live", "--timeout", {{ $probeTimeout | quote }}, "--address", "127.0.0.1:{{ .Values.diagnosticsPort }}"]
-            timeoutSeconds: {{ $probeSeconds }}
+            httpGet:
+              path: /livez
+              port: metrics
           volumeMounts:
             - name: config
               mountPath: /etc/weir
@@ -112,25 +105,9 @@ spec:
             {{- end }}
       volumes:
         - name: config
-          projected:
+          configMap:
+            name: {{ include "weir.fullname" . }}
             defaultMode: 0440
-            sources:
-              - configMap:
-                  name: {{ include "weir.fullname" . }}
-                  items:
-                    - key: node.yaml
-                      path: node.yaml
-                    {{- if not .Values.storesSecret }}
-                    - key: routes.yaml
-                      path: routes.yaml
-                    {{- end }}
-              {{- if .Values.storesSecret }}
-              - secret:
-                  name: {{ .Values.storesSecret }}
-                  items:
-                    - key: routes.yaml
-                      path: routes.yaml
-              {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
