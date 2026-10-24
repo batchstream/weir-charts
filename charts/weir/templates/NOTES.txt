@@ -8,7 +8,7 @@ ServiceMonitor requires an installed Prometheus Operator and a Prometheus select
 ScaledObject requires an installed KEDA controller and CRDs. Verify its Prometheus query returns one value.
 {{- end }}
 
-Validate this immutable image with the generated node.yaml and selected routes.yaml.
+Validate the generated weir.yaml with this immutable image's `weir check`.
 Application traffic requires a trusted, isolated network; verify CNI enforcement.
 A missing mutation response is UNKNOWN: reconcile before retrying.
 Store membership or backend changes require a coordinated migration, not an ordinary rolling update.

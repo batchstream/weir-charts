@@ -28,7 +28,7 @@ metrics:
           weir-client: 'true'
     ports:
     - protocol: TCP
-      port: 7449
+      port: metrics
 networkPolicy:
   egress:
   - to:
@@ -39,6 +39,5 @@ networkPolicy:
       port: 27017
 stores:
 - name: mongo
-  backend:
-    mongodb:
-      uri: mongodb://10.0.0.10:27017/?directConnection=true
+  mongodb:
+    uri: mongodb://10.0.0.10:27017/?directConnection=true

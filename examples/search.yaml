@@ -1,9 +1,8 @@
 # Install this Store group as its own release in namespace application.
 stores:
 - name: search
-  backend:
-    search:
-      url: http://search:9200
+  search:
+    url: http://search:9200
 networkPolicy:
   egress:
   - to:

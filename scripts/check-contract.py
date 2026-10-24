@@ -1,18 +1,20 @@
-"""Validate rendered config and CLI against an explicitly selected Weir binary.
+"""Validate rendered config and serving against an explicitly selected Weir binary.
 
 No backend connections or existing Secret files are read. The only live process
-is an isolated no-Store node using loopback diagnostics and ephemeral ports.
+is an isolated no-Store node on loopback ephemeral ports.
 """
 import argparse
 import copy
+import http.client
 import json
-import os
 from pathlib import Path
 import shutil
 import socket
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.request
 
 import yaml
 
@@ -37,26 +39,19 @@ def validate_config(binary, resources, directory):
     config = next(item for item in resources if item["kind"] == "ConfigMap")
     deployment = next(item for item in resources if item["kind"] == "Deployment")
     container = deployment["spec"]["template"]["spec"]["containers"][0]
-    for name in ("node.yaml", "routes.yaml"):
-        (directory / name).write_text(config["data"][name])
-    environment = dict(os.environ)
+    (directory / "weir.yaml").write_text(config["data"]["weir.yaml"])
     args = [str(directory / Path(arg).name) if arg.startswith("/etc/weir/") else arg
             for arg in container["args"]]
     command = [binary, "check", *args[1:]]
-    result = subprocess.run(command, env=environment, capture_output=True, text=True, check=True)
+    result = subprocess.run(command, capture_output=True, text=True, check=True)
     if result.stdout.strip() != "configuration valid":
         raise RuntimeError("unexpected configuration validation response")
-    return container, args, environment
+    return container, args
 
 
-def process_policy():
-    """Return valid values for every transport and overload key."""
-    timeouts = {"handshake": "5s", "idle": "1m", "stall": "30s"}
-    keepalive = {"interval": "30s", "timeout": "5s"}
-    transport = {"max_pending_records": 256, "timeouts": timeouts, "keepalive": keepalive}
-    memory = {"high_watermark": 85, "low_watermark": 75, "sample_interval": "200ms"}
-    overload = {"memory": memory}
-    policy = {"transport": transport, "overload": overload}
+def batching_policy():
+    """Return valid values for every batching key."""
+    policy = {"max_operations": 64, "max_bytes": "2MiB", "max_wait": "0s", "max_in_flight": 8}
     return policy
 
 
@@ -64,10 +59,9 @@ def check_scale(binary, directory):
     """Validate a group with many Stores and replicas."""
     stores = []
     for index in range(SCALE_STORES):
-        backend = {"mongodb": {"uri": "mongodb://127.0.0.1:27017/?directConnection=true"}}
+        store = {"name": "store" + str(index), "mongodb": {"uri": "mongodb://127.0.0.1:27017/?directConnection=true"}}
         if index % 2:
-            backend = {"search": {"url": "http://127.0.0.1:9200"}}
-        store = {"name": "store" + str(index), "backend": backend}
+            store = {"name": "store" + str(index), "search": {"url": "http://127.0.0.1:9200"}}
         stores.append(store)
     values = {"stores": stores, "replicaCount": SCALE_REPLICAS}
     resources = render(values)
@@ -90,15 +84,27 @@ def reserve_port():
 
 def isolate_runtime(resources, app_port, diagnostic_port):
     config = next(item for item in resources if item["kind"] == "ConfigMap")
-    node = yaml.safe_load(config["data"]["node.yaml"])
-    routes = yaml.safe_load(config["data"]["routes.yaml"])
-    if (routes["stores"] or node["listeners"] != {"application": "[::]:" + str(app_port)}
-            or node["diagnostics"]["address"] != "127.0.0.1:" + str(diagnostic_port)):
-        raise RuntimeError("runtime fixture must have no Stores and loopback diagnostics")
-    # Static checks cover the generated wildcard listener. Never expose the live
+    document = yaml.safe_load(config["data"]["weir.yaml"])
+    generated = {"application": "[::]:" + str(app_port), "diagnostics": "[::]:" + str(diagnostic_port)}
+    if document["stores"] or document["listeners"] != generated:
+        raise RuntimeError("runtime fixture must have no Stores and only the generated listeners")
+    # Static checks cover the generated wildcard listeners. Never expose the live
     # no-Store fixture outside loopback, even on a developer's network.
-    node["listeners"]["application"] = "127.0.0.1:" + str(app_port)
-    config["data"]["node.yaml"] = yaml.safe_dump(node)
+    document["listeners"] = {"application": "127.0.0.1:" + str(app_port),
+                             "diagnostics": "127.0.0.1:" + str(diagnostic_port)}
+    config["data"]["weir.yaml"] = yaml.safe_dump(document)
+
+
+def healthy(container, probe):
+    """Run one rendered httpGet probe on its named container port over loopback, bypassing any proxy."""
+    ports = {port["name"]: port["containerPort"] for port in container["ports"]}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    url = "http://127.0.0.1:" + str(ports[probe["httpGet"]["port"]]) + probe["httpGet"]["path"]
+    try:
+        with opener.open(url, timeout=1) as response:
+            return response.status == 200
+    except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError):
+        return False
 
 
 def check_runtime(binary, directory):
@@ -107,32 +113,27 @@ def check_runtime(binary, directory):
     diagnostics = reserve_port()
     app_port = application.getsockname()[1]
     diagnostic_port = diagnostics.getsockname()[1]
-    values = {"service": {"port": app_port}, "diagnosticsPort": diagnostic_port,
-              "probeTimeoutMilliseconds": 1250}
+    values = {"service": {"port": app_port}, "diagnosticsPort": diagnostic_port}
     resources = render(values)
     validate_config(binary, resources, directory)
     isolate_runtime(resources, app_port, diagnostic_port)
-    container, args, environment = validate_config(binary, resources, directory)
+    container, args = validate_config(binary, resources, directory)
     application.close()
     diagnostics.close()
     with tempfile.TemporaryFile(mode="w+") as output:
-        process = subprocess.Popen([binary, *args], env=environment, stdout=output, stderr=output)
+        process = subprocess.Popen([binary, *args], stdout=output, stderr=output)
         try:
             print("Isolated no-Store runtime PID " + str(process.pid) + ", loopback ports "
                   + str(app_port) + "/" + str(diagnostic_port), flush=True)
             deadline = time.monotonic() + 10
-            while True:
-                command = [binary, *container["startupProbe"]["exec"]["command"][1:]]
-                ready = subprocess.run(command, capture_output=True, text=True, timeout=3)
-                if ready.returncode == 0:
-                    break
+            while not healthy(container, container["startupProbe"]):
                 if process.poll() is not None or time.monotonic() >= deadline:
                     output.seek(0)
                     raise RuntimeError("rendered serve/startup probe failed: " + output.read())
                 time.sleep(0.05)
             for name in ("readinessProbe", "livenessProbe"):
-                command = [binary, *container[name]["exec"]["command"][1:]]
-                subprocess.run(command, capture_output=True, text=True, check=True, timeout=3)
+                if not healthy(container, container[name]):
+                    raise RuntimeError("rendered " + name + " failed")
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -170,49 +171,52 @@ def main():
             resources = render(values, release)
             validate_config(binary, resources, directory)
             custom = copy.deepcopy(values)
-            custom.update(fullnameOverride="custom")
-            custom["nodeConfig"] = process_policy()
-            custom["lifecycle"] = {"startupTimeoutSeconds": 7, "shutdownTimeoutSeconds": 9, "cleanupTimeoutSeconds": 3}
+            custom.update(fullnameOverride="custom", shutdownTimeoutSeconds=9)
             for store in custom["stores"]:
-                backend = store["backend"]
-                if "mongodb" in backend:
-                    backend["mongodb"].update(max_connecting=3, metadata_cache_entries=0,
-                                              retry_attempts=2, retry_backoff="0s")
-                else:
-                    backend["search"].update(retry_attempts=1, idle_timeout="0s")
+                store["batching"] = batching_policy()
             validate_config(binary, render(custom, release), directory)
             replicas = copy.deepcopy(values)
             replicas.update(yaml.safe_load((ROOT / "examples/three-replicas.yaml").read_text()))
             validate_config(binary, render(replicas, release), directory)
-        # Exercise relative credential-file resolution using only generated fixtures.
+        # Credential files resolve relative to the generated configuration file.
         files = copy.deepcopy(fixtures[0][1])
-        backend = files["stores"][0]["backend"]
-        backend["mongodb"].update(uri="mongodb://mongo:27017/?directConnection=true&authMechanism=SCRAM-SHA-256&authSource=admin&tls=true")
-        backend["authentication"] = {"username_file":"test-user.txt", "password_file":"test-password.txt"}
+        store = files["stores"][0]
+        store["mongodb"]["uri"] = ("mongodb://mongo:27017/?directConnection=true"
+                                   "&authMechanism=SCRAM-SHA-256&authSource=admin&tls=true")
+        store["authentication"] = {"username_file": "test-user.txt", "password_file": "test-password.txt"}
         (directory / "test-user.txt").write_text("test-user\n")
         (directory / "test-password.txt").write_text("test-password\n")
         validate_config(binary, render(files), directory)
         files = copy.deepcopy(fixtures[1][1])
-        backend = files["stores"][0]["backend"]
-        backend["search"]["url"] = "https://search:9200"
-        backend["authentication"] = {"username_file": "test-user.txt", "password_file": "test-password.txt"}
+        store = files["stores"][0]
+        store["search"]["url"] = "https://search:9200"
+        store["authentication"] = {"username_file": "test-user.txt", "password_file": "test-password.txt"}
         validate_config(binary, render(files, "search"), directory)
-        # Server validation owns process semantics beyond the Chart's boundaries.
+        # check reads the referenced files rather than trusting their names.
+        store["authentication"]["password_file"] = "missing-password.txt"
+        try:
+            validate_config(binary, render(files, "search"), directory)
+        except subprocess.CalledProcessError as error:
+            if "credential file unavailable" not in error.stderr:
+                raise RuntimeError("missing credential file rejected for another reason: "
+                                   + error.stderr) from error
+        else:
+            raise RuntimeError("missing credential file unexpectedly accepted")
+        # Server validation owns backend semantics beyond the Chart's schema.
         invalid = copy.deepcopy(fixtures[0][1])
-        memory = {"high_watermark": 70, "low_watermark": 80}
-        invalid["nodeConfig"] = {"overload": {"memory": memory}}
+        invalid["stores"][0]["mongodb"]["uri"] = "mongodb://mongo/?directConnection=true"
         resources = render(invalid)
         try:
             validate_config(binary, resources, directory)
         except subprocess.CalledProcessError as error:
-            if "memory pressure watermarks" not in error.stderr:
-                raise RuntimeError("invalid process configuration rejected for another reason: "
+            if "explicit valid host and port" not in error.stderr:
+                raise RuntimeError("invalid Store configuration rejected for another reason: "
                                    + error.stderr) from error
         else:
-            raise RuntimeError("invalid process configuration unexpectedly accepted")
+            raise RuntimeError("invalid Store configuration unexpectedly accepted")
         check_scale(binary, directory)
         check_runtime(binary, directory)
-    print("Contract checks passed: MongoDB/Search configurations, process policy, scale, "
+    print("Contract checks passed: MongoDB/Search configurations, batching, scale, "
           "credential files and serve/probes/shutdown")
 
 

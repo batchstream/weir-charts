@@ -23,23 +23,13 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "weir.image" -}}
 {{ printf "%s@%s" .Values.image.repository (required "image.digest must identify a compatible immutable Weir image" .Values.image.digest) }}
 {{- end -}}
-{{- define "weir.node" -}}
-{{- $node := deepCopy .Values.nodeConfig -}}
-{{- $lifecycle := dict "startup_timeout" (printf "%ds" (int .Values.lifecycle.startupTimeoutSeconds)) "shutdown_timeout" (printf "%ds" (int .Values.lifecycle.shutdownTimeoutSeconds)) "cleanup_timeout" (printf "%ds" (int .Values.lifecycle.cleanupTimeoutSeconds)) -}}
-{{- $_ := set $node "lifecycle" $lifecycle -}}
-{{- $listeners := dict "application" (printf "[::]:%v" .Values.service.port) -}}
-{{- $diagnostics := default dict $node.diagnostics -}}
-{{- $_ := set $diagnostics "address" (printf "127.0.0.1:%v" .Values.diagnosticsPort) -}}
-{{- if .Values.metrics.enabled -}}
-{{- $_ := set $diagnostics "address" (printf "[::]:%v" .Values.diagnosticsPort) -}}
-{{- $_ := set $diagnostics "allow_intranet" true -}}
-{{- end -}}
-{{- $_ := set $node "listeners" $listeners -}}
-{{- $_ := set $node "diagnostics" $diagnostics -}}
-{{- $node | toYaml -}}
+{{- define "weir.config" -}}
+{{- $listeners := dict "application" (printf "[::]:%v" .Values.service.port) "diagnostics" (printf "[::]:%v" .Values.diagnosticsPort) -}}
+{{- $config := dict "listeners" $listeners "shutdown_timeout" (printf "%ds" (int .Values.shutdownTimeoutSeconds)) "stores" .Values.stores -}}
+{{- $config | toYaml -}}
 {{- end -}}
 {{- define "weir.validate" -}}
-{{- range $key := list "checksum/config" "weir.batchstream.io/source-revision" "weir.batchstream.io/stores-revision" -}}
+{{- range $key := list "checksum/config" "weir.batchstream.io/source-revision" -}}
 {{- if hasKey $.Values.podAnnotations $key -}}
 {{- fail (printf "%s is managed by the Chart and cannot be overridden in podAnnotations" $key) -}}
 {{- end -}}
@@ -52,18 +42,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- fail (printf "metrics.serviceMonitor.labels cannot override managed label %s" $key) -}}
 {{- end -}}
 {{- end -}}
-{{- if and .Values.storesSecret (not (empty .Values.stores)) -}}
-{{- fail "storesSecret and non-empty stores are mutually exclusive" -}}
-{{- end -}}
 {{- $names := dict -}}
 {{- range .Values.stores -}}
 {{- if hasKey $names .name -}}{{- fail "stores names must be unique within the group" -}}{{- end -}}
 {{- $_ := set $names .name true -}}
-{{- $backend := default dict .backend -}}
-{{- $mongodb := default dict $backend.mongodb -}}
-{{- $search := default dict $backend.search -}}
-{{- if or (regexMatch "^[^:]+://[^/?#]*@" (default "" $mongodb.uri)) (regexMatch "^[^:]+://[^/?#]*@" (default "" $search.url)) -}}
-{{- fail "backend URI userinfo is unsupported; use credential-file authentication" -}}
+{{- $mongodb := default dict .mongodb -}}
+{{- $search := default dict .search -}}
+{{- if or (contains "@" (default "" $mongodb.uri)) (contains "@" (default "" $search.url)) -}}
+{{- fail "backend URIs must not contain @; userinfo is unsupported, use credential-file authentication" -}}
 {{- end -}}
 {{- end -}}
 {{- if and .Values.metrics.enabled (empty .Values.metrics.ingress) .Values.networkPolicy.enabled -}}

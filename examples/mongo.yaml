@@ -1,9 +1,8 @@
 # Install this Store group as its own release in namespace application.
 stores:
 - name: mongo
-  backend:
-    mongodb:
-      uri: mongodb://mongo:27017/?directConnection=true
+  mongodb:
+    uri: mongodb://mongo:27017/?directConnection=true
 networkPolicy:
   egress:
   - to:
