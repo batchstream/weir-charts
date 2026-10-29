@@ -31,33 +31,21 @@ jobs:
         with:
           version: v3.17.0
       - run: pip install -r requirements-dev.txt
-      - name: Checkout the supported Weir source contract
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: batchstream/weir
-          ref: db2a5731e41b0d4d79e8c9bbaf24a562021f0182
-          path: .weir-contract
-          persist-credentials: false
-      - name: Build the contract validator
-        run: go -C .weir-contract build -o bin/weir ./cmd/weir
-      - run: make package WEIR_BIN="$PWD/.weir-contract/bin/weir"
+      - name: Install the Weir contract validator
+        run: go install github.com/batchstream/weir/cmd/weir@b0687cc450fb0133a0b2e0592a5058ec797ba47f
+      - run: make package WEIR_BIN="$(go env GOPATH)/bin/weir"
       - name: Check version
         run: test "$GITHUB_REF_NAME" = "weir-$(helm show chart charts/weir | awk '/^version:/ {print $2}')"
-      - name: Verify immutable version is absent
+      - name: Checksum release archive
+        run: cd dist && sha256sum *.tgz > SHA256SUMS
+      # Creating the release first fails a rerun before it can push over a published chart.
+      - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          version=$(helm show chart charts/weir | awk '/^version:/ {print $2}')
-          python3 scripts/check-release.py "$version"
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tgz dist/SHA256SUMS --generate-notes
       - name: Publish OCI chart
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           helm push dist/weir-*.tgz oci://ghcr.io/batchstream/charts
-      - name: Checksum release archive
-        run: cd dist && sha256sum *.tgz > SHA256SUMS
-      - name: Attach release archive
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.tgz dist/SHA256SUMS --generate-notes

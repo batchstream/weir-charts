@@ -450,11 +450,11 @@ class ChartTests(unittest.TestCase):
                         listener.__exit__.assert_called_once()
 
     def test_chart_identity_matches_pinned_image(self):
-        revision = "db2a5731e41b0d4d79e8c9bbaf24a562021f0182"
-        digest = "sha256:69d4d91ee43c7050347073bf9e7acc746a714a16c3c13daa914f9a3bfc8cdfd8"
+        revision = "b0687cc450fb0133a0b2e0592a5058ec797ba47f"
+        digest = "sha256:ff5cc59ac80a9251258d4a9bd738093e57345af16b6a20238acecd79896f9a1e"
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
         values = yaml.safe_load((ROOT / "charts/weir/values.yaml").read_text())
-        self.assertEqual(chart["version"], "0.11.0-rc.1")
+        self.assertEqual(chart["version"], "0.12.0-rc.1")
         self.assertEqual(chart["annotations"]["weir.batchstream.io/source-revision"], revision)
         self.assertEqual(values["image"]["repository"], "ghcr.io/batchstream/weir")
         self.assertEqual(values["image"]["digest"], digest)
@@ -471,7 +471,7 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(deployment["metadata"]["labels"]["helm.sh/chart"], "weir-" + chart["version"])
         self.assertEqual(deployment["metadata"]["labels"]["app.kubernetes.io/version"], chart["appVersion"])
 
-    def test_ci_builds_the_recorded_source_contract(self):
+    def test_ci_installs_the_recorded_source_contract(self):
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
         revision = chart["annotations"]["weir.batchstream.io/source-revision"]
         self.assertRegex(revision, r"^[0-9a-f]{40}$")
@@ -481,10 +481,8 @@ class ChartTests(unittest.TestCase):
             with self.subTest(workflow=name):
                 workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
                 steps = next(iter(workflow["jobs"].values()))["steps"]
-                source = next(step for step in steps if step.get("with", {}).get("repository") == "batchstream/weir")
-                self.assertEqual(source["with"]["ref"], revision)
-                self.assertEqual(source["with"]["path"], ".weir-contract")
-                self.assertIs(source["with"]["persist-credentials"], False)
+                commands = [step.get("run", "") for step in steps]
+                self.assertIn("go install github.com/batchstream/weir/cmd/weir@" + revision, commands)
 
     def test_unknown_keys_are_rejected_in_every_strict_object(self):
         schema = json.loads((ROOT / "charts/weir/values.schema.json").read_text())
