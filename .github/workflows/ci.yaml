@@ -23,8 +23,8 @@ jobs:
           version: v3.17.0
       - run: pip install -r requirements-dev.txt
       - name: Install the Weir contract validator
-        run: go install github.com/batchstream/weir/cmd/weir@b0687cc450fb0133a0b2e0592a5058ec797ba47f
-      - run: make test WEIR_BIN="$(go env GOPATH)/bin/weir"
+        run: GOBIN="$PWD/.bin" go install github.com/batchstream/weir/cmd/weir@b0687cc450fb0133a0b2e0592a5058ec797ba47f
+      - run: make test WEIR_BIN="$PWD/.bin/weir"
       - run: helm package charts/weir --destination dist
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

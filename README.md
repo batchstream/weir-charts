@@ -35,7 +35,7 @@ The Chart generates `weir.yaml` with the listeners, `shutdown_timeout` and `stor
 
 ## Configuration and credentials
 
-The Chart renders one `weir.yaml` into its ConfigMap and mounts it read-only at `/etc/weir`. Its schema rejects unknown keys; the selected Weir binary validates backend semantics. Weir fixes transport, memory-pressure, Lua, queue and retry policy internally, so only listeners, the shutdown drain and Stores are configurable. Weir sets its Go memory limit to 90% of the container memory limit and refuses new work as live memory nears it, so keep a memory limit in `resources`; without one Weir does not shed load.
+The Chart renders one `weir.yaml` into its ConfigMap and mounts it read-only at `/etc/weir`. Its schema rejects unknown keys; the selected Weir binary validates backend semantics. Weir fixes transport, memory-pressure, Lua, queue and retry policy internally, so only listeners, the shutdown drain and Stores are configurable. Weir sets its Go memory limit to 90% of its container's cgroup v2 `memory.max` and refuses new work as live memory nears it, so keep a memory limit in `resources`. Without a limit, or on cgroup v1 nodes, Weir does not shed load.
 
 Helm retains values in release history. Inline backend credentials are rejected, and so is any `@` in `mongodb.uri` or `search.url`, since it can only carry userinfo. MongoDB and Search use `authentication.username_file/password_file`; mount an externally managed Secret read-only using `extraVolumes/extraVolumeMounts` and reference it by absolute path, since relative paths resolve from `/etc/weir`; [examples/credential-files.yaml](examples/credential-files.yaml) shows the layout. MongoDB requires SCRAM-SHA-256, authSource and TLS in the URI when authenticating. Both adapters can use `tls.ca_file`, or system trust when it is absent. Credential and CA files are read at startup; roll the Pods after rotating them, for example by changing a `podAnnotations` entry.
 
@@ -78,13 +78,13 @@ Changes to Store membership or backend identity require a coordinated cutover. A
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
-go install github.com/batchstream/weir/cmd/weir@SOURCE_REVISION
-make test PYTHON=.venv/bin/python WEIR_BIN="$(go env GOPATH)/bin/weir"
-make package PYTHON=.venv/bin/python WEIR_BIN="$(go env GOPATH)/bin/weir"
+GOBIN="$PWD/.bin" go install github.com/batchstream/weir/cmd/weir@SOURCE_REVISION
+make test PYTHON=.venv/bin/python WEIR_BIN="$PWD/.bin/weir"
+make package PYTHON=.venv/bin/python WEIR_BIN="$PWD/.bin/weir"
 # Optional real PromQL regression, using a separately installed official promtool:
 promtool test rules tests/prometheus/autoscaling-query.test.yaml
 ```
 
 `SOURCE_REVISION` is the `weir.batchstream.io/source-revision` annotation in `Chart.yaml`. `make test` lints the Chart, renders every example and validates the generated configuration with the selected Weir binary, including a scale check with many Stores and replicas and an isolated loopback-only serve, HTTP probe and shutdown run. It opens no backend connections, reads no existing Secrets and does not exercise CNI enforcement, Prometheus collection or KEDA scaling in a real cluster; the optional promtool command checks the autoscaling query against its fixture.
 
-A reviewed `weir-VERSION` tag on `main` publishes the OCI Chart and a GitHub release with the archive and SHA256SUMS. The release is created first, so rerunning a published version fails instead of overwriting its Chart. Source annotation, image digest and CI source pins must identify the same server revision.
+A reviewed `weir-VERSION` tag on `main` publishes the OCI Chart and a GitHub release with the archive and SHA256SUMS. The workflow refuses a version whose OCI Chart already exists and creates the release before pushing, so a rerun never overwrites a published Chart. If the push fails after the release exists, verify the release archive against its SHA256SUMS and `helm push` it by hand. Source annotation, image digest and CI source pins must identify the same server revision.

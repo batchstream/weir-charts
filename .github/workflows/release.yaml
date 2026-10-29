@@ -32,20 +32,27 @@ jobs:
           version: v3.17.0
       - run: pip install -r requirements-dev.txt
       - name: Install the Weir contract validator
-        run: go install github.com/batchstream/weir/cmd/weir@b0687cc450fb0133a0b2e0592a5058ec797ba47f
-      - run: make package WEIR_BIN="$(go env GOPATH)/bin/weir"
+        run: GOBIN="$PWD/.bin" go install github.com/batchstream/weir/cmd/weir@b0687cc450fb0133a0b2e0592a5058ec797ba47f
+      - run: make package WEIR_BIN="$PWD/.bin/weir"
       - name: Check version
         run: test "$GITHUB_REF_NAME" = "weir-$(helm show chart charts/weir | awk '/^version:/ {print $2}')"
       - name: Checksum release archive
         run: cd dist && sha256sum *.tgz > SHA256SUMS
-      # Creating the release first fails a rerun before it can push over a published chart.
+      - name: Require an unpublished chart version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          version=${GITHUB_REF_NAME#weir-}
+          if helm show chart oci://ghcr.io/batchstream/charts/weir --version "$version" 2>"$RUNNER_TEMP/show.err"; then
+            echo "chart $version is already published" >&2
+            exit 1
+          fi
+          grep -q ': not found' "$RUNNER_TEMP/show.err"
+      # The release is created before the push, so a rerun stops here instead of pushing again.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/*.tgz dist/SHA256SUMS --generate-notes
       - name: Publish OCI chart
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          printf '%s' "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          helm push dist/weir-*.tgz oci://ghcr.io/batchstream/charts
+        run: helm push dist/weir-*.tgz oci://ghcr.io/batchstream/charts

@@ -482,7 +482,10 @@ class ChartTests(unittest.TestCase):
                 workflow = yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
                 steps = next(iter(workflow["jobs"].values()))["steps"]
                 commands = [step.get("run", "") for step in steps]
-                self.assertIn("go install github.com/batchstream/weir/cmd/weir@" + revision, commands)
+                install = 'GOBIN="$PWD/.bin" go install github.com/batchstream/weir/cmd/weir@' + revision
+                self.assertIn(install, commands)
+                make = next(command for command in commands if command.startswith("make "))
+                self.assertTrue(make.endswith('WEIR_BIN="$PWD/.bin/weir"'), make)
 
     def test_unknown_keys_are_rejected_in_every_strict_object(self):
         schema = json.loads((ROOT / "charts/weir/values.schema.json").read_text())

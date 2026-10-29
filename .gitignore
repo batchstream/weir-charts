@@ -2,4 +2,4 @@ dist/
 .venv/
 __pycache__/
 *.tgz
-.weir-contract/
+.bin/
