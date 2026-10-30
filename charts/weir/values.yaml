@@ -26,6 +26,14 @@ metrics:
     labels: {}
     interval: 15s
     scrapeTimeout: 10s
+  # Alerts for this group. Requires Prometheus Operator; labels must match its ruleSelector.
+  prometheusRule:
+    enabled: false
+    labels: {}
+  # A dashboard for this group in a ConfigMap; labels must match the Grafana dashboard sidecar.
+  grafanaDashboard:
+    enabled: false
+    labels: {}
 autoscaling:
   enabled: false
   minReplicaCount: 1

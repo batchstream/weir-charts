@@ -211,7 +211,9 @@
         "enabled",
         "annotations",
         "ingress",
-        "serviceMonitor"
+        "serviceMonitor",
+        "prometheusRule",
+        "grafanaDashboard"
       ],
       "properties": {
         "enabled": {
@@ -249,6 +251,44 @@
             "scrapeTimeout": {
               "type": "string",
               "pattern": "^[1-9][0-9]*(ms|s|m|h)$"
+            }
+          }
+        },
+        "prometheusRule": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "labels"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "grafanaDashboard": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "labels"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "labels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
             }
           }
         }

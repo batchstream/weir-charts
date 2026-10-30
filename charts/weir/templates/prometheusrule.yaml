@@ -1,0 +1,92 @@
+{{- if .Values.metrics.prometheusRule.enabled }}
+{{- $group := include "weir.group" . }}
+{{- $selector := printf "namespace=%q,weir_group=%q" .Release.Namespace $group }}
+{{- $runbook := "https://github.com/batchstream/weir/blob/main/docs/operations.md" }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "weir.fullname" . }}
+  labels:
+    {{- include "weir.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: weir
+      rules:
+        - alert: WeirGroupUnavailable
+          expr: (sum(weir_node_ready{ {{- $selector -}} }) or vector(0)) < 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Store group {{ $group }} has no Ready replica that Prometheus can scrape."
+            runbook_url: {{ $runbook }}#weirgroupunavailable
+        - alert: WeirScrapeFailing
+          expr: up{ {{- $selector -}} } == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Prometheus cannot scrape {{`{{ $labels.instance }}`}} of {{ $group }}."
+            runbook_url: {{ $runbook }}#weirscrapefailing
+        - alert: WeirMemoryPressure
+          expr: max_over_time(weir_memory_overloaded{ {{- $selector -}} }[5m]) == 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Replica {{`{{ $labels.instance }}`}} of {{ $group }} keeps refusing work under memory pressure."
+            runbook_url: {{ $runbook }}#weirmemorypressure
+        - alert: WeirAdmissionRejections
+          expr: sum by (reason) (rate(weir_admission_rejections_total{ {{- $selector -}} ,reason!="draining"}[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $group }} keeps refusing RPCs at admission ({{`{{ $labels.reason }}`}})."
+            runbook_url: {{ $runbook }}#weiradmissionrejections
+        - alert: WeirStoreRejections
+          expr: sum by (store, reason) (rate(weir_store_rejections_total{ {{- $selector -}} ,reason!="draining"}[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Store {{`{{ $labels.store }}`}} of {{ $group }} keeps refusing records ({{`{{ $labels.reason }}`}})."
+            runbook_url: {{ $runbook }}#weirstorerejections
+        - alert: WeirUnknownOutcomes
+          expr: sum by (store) (rate(weir_store_records_total{ {{- $selector -}} ,operation="mutate",outcome="unknown"}[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Store {{`{{ $labels.store }}`}} of {{ $group }} keeps ending mutations with an unknown outcome."
+            runbook_url: {{ $runbook }}#weirunknownoutcomes
+        - alert: WeirRecordFailures
+          expr: |-
+            sum by (store) (rate(weir_store_record_failures_total{ {{- $selector -}} }[5m]))
+              / sum by (store) (rate(weir_store_records_total{ {{- $selector -}} }[5m])) > 0.05
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "More than 5% of records of Store {{`{{ $labels.store }}`}} in {{ $group }} end with a failure."
+            runbook_url: {{ $runbook }}#weirrecordfailures
+        - alert: WeirQueueWaitHigh
+          expr: histogram_quantile(0.99, sum by (store, le) (rate(weir_store_queue_wait_seconds_bucket{ {{- $selector -}} }[5m]))) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Records of Store {{`{{ $labels.store }}`}} in {{ $group }} wait more than a second before dispatch."
+            runbook_url: {{ $runbook }}#weirqueuewaithigh
+        - alert: WeirWatchdogExpirations
+          expr: sum by (phase) (rate(weir_watchdog_expirations_total{ {{- $selector -}} }[5m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $group }} keeps ending stalled RPCs ({{`{{ $labels.phase }}`}})."
+            runbook_url: {{ $runbook }}#weirwatchdogexpirations
+{{- end }}

@@ -4,6 +4,12 @@ SDK address (weir.New), resolving to this group's Ready Pods:
 {{- if .Values.metrics.serviceMonitor.enabled }}
 ServiceMonitor requires an installed Prometheus Operator and a Prometheus selector accepting its labels.
 {{- end }}
+{{- if .Values.metrics.prometheusRule.enabled }}
+PrometheusRule requires an installed Prometheus Operator and a rule selector accepting its labels.
+{{- end }}
+{{- if .Values.metrics.grafanaDashboard.enabled }}
+The dashboard ConfigMap requires Grafana's dashboard sidecar watching this namespace and accepting its labels.
+{{- end }}
 {{- if .Values.autoscaling.enabled }}
 ScaledObject requires an installed KEDA controller and CRDs. Verify its Prometheus query returns one value.
 {{- end }}

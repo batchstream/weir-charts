@@ -1,0 +1,17 @@
+{{- if .Values.metrics.grafanaDashboard.enabled }}
+{{- $group := include "weir.group" . }}
+{{- $selector := printf `namespace=\"%s\",weir_group=\"%s\"` .Release.Namespace $group }}
+{{- $uid := printf "weir-%s" (sha256sum $group | trunc 16) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "weir.fullname" . }}-dashboard
+  labels:
+    {{- include "weir.labels" . | nindent 4 }}
+    {{- with .Values.metrics.grafanaDashboard.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  weir.json: |-
+    {{- .Files.Get "dashboards/weir.json" | replace "WEIR_SELECTOR" $selector | replace "WEIR_GROUP" $group | replace "WEIR_UID" $uid | nindent 4 }}
+{{- end }}

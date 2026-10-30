@@ -37,9 +37,15 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if eq (int .Values.service.port) (int .Values.diagnosticsPort) -}}
 {{- fail "service.port and diagnosticsPort must be distinct" -}}
 {{- end -}}
+{{- range $monitor := list "serviceMonitor" "prometheusRule" "grafanaDashboard" -}}
+{{- $labels := (index $.Values.metrics $monitor).labels -}}
 {{- range $key := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" "app.kubernetes.io/version" "app.kubernetes.io/managed-by" "helm.sh/chart" -}}
-{{- if hasKey $.Values.metrics.serviceMonitor.labels $key -}}
-{{- fail (printf "metrics.serviceMonitor.labels cannot override managed label %s" $key) -}}
+{{- if hasKey $labels $key -}}
+{{- fail (printf "metrics.%s.labels cannot override managed label %s" $monitor $key) -}}
+{{- end -}}
+{{- end -}}
+{{- if and (index $.Values.metrics $monitor).enabled (not $.Values.metrics.enabled) -}}
+{{- fail (printf "metrics.%s.enabled requires metrics.enabled" $monitor) -}}
 {{- end -}}
 {{- end -}}
 {{- $names := dict -}}
@@ -54,9 +60,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- if and .Values.metrics.enabled (empty .Values.metrics.ingress) .Values.networkPolicy.enabled -}}
 {{- fail "metrics.enabled requires explicit metrics.ingress sources when NetworkPolicy is enabled" -}}
-{{- end -}}
-{{- if and .Values.metrics.serviceMonitor.enabled (not .Values.metrics.enabled) -}}
-{{- fail "metrics.serviceMonitor.enabled requires metrics.enabled" -}}
 {{- end -}}
 {{- $minimum := int .Values.replicaCount -}}
 {{- if .Values.autoscaling.enabled -}}
