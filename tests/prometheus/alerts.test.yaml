@@ -43,7 +43,7 @@ tests:
   - eval_time: 3m
     alertname: WeirGroupUnavailable
     exp_alerts:
-    - exp_labels: {severity: critical}
+    - exp_labels: {severity: critical, namespace: application, weir_group: application/mongo}
       exp_annotations:
         summary: Store group application/mongo has no Ready replica that Prometheus can scrape.
         runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirgroupunavailable
@@ -59,7 +59,7 @@ tests:
   - eval_time: 15m
     alertname: WeirUnknownOutcomes
     exp_alerts:
-    - exp_labels: {severity: warning, store: primary}
+    - exp_labels: {severity: warning, store: primary, namespace: application, weir_group: application/mongo}
       exp_annotations:
         summary: Store primary of application/mongo keeps ending mutations with an unknown outcome.
         runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirunknownoutcomes
@@ -81,7 +81,7 @@ tests:
   - eval_time: 17m
     alertname: WeirRecordFailures
     exp_alerts:
-    - exp_labels: {severity: warning, store: primary}
+    - exp_labels: {severity: warning, store: primary, namespace: application, weir_group: application/mongo}
       exp_annotations:
         summary: More than 5% of records of Store primary in application/mongo end with a failure.
         runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirrecordfailures
@@ -101,14 +101,14 @@ tests:
   - eval_time: 12m
     alertname: WeirStoreRejections
     exp_alerts:
-    - exp_labels: {severity: warning, store: primary, reason: overload}
+    - exp_labels: {severity: warning, store: primary, reason: overload, namespace: application, weir_group: application/mongo}
       exp_annotations:
         summary: Store primary of application/mongo keeps refusing records (overload).
         runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirstorerejections
   - eval_time: 12m
     alertname: WeirAdmissionRejections
     exp_alerts:
-    - exp_labels: {severity: warning, reason: overload}
+    - exp_labels: {severity: warning, reason: overload, namespace: application, weir_group: application/mongo}
       exp_annotations:
         summary: application/mongo keeps refusing RPCs at admission (overload).
         runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weiradmissionrejections
@@ -130,7 +130,7 @@ tests:
   - eval_time: 12m
     alertname: WeirQueueWaitHigh
     exp_alerts:
-    - exp_labels: {severity: warning, store: primary}
+    - exp_labels: {severity: warning, store: primary, namespace: application, weir_group: application/mongo}
       exp_annotations:
         summary: Records of Store primary in application/mongo wait more than a second before dispatch.
         runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirqueuewaithigh
@@ -155,7 +155,7 @@ tests:
   - eval_time: 12m
     alertname: WeirWatchdogExpirations
     exp_alerts:
-    - exp_labels: {severity: warning, phase: output}
+    - exp_labels: {severity: warning, phase: output, namespace: application, weir_group: application/mongo}
       exp_annotations:
         summary: application/mongo keeps ending stalled RPCs (output).
         runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirwatchdogexpirations

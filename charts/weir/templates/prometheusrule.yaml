@@ -20,6 +20,8 @@ spec:
           for: 2m
           labels:
             severity: critical
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
           annotations:
             summary: "Store group {{ $group }} has no Ready replica that Prometheus can scrape."
             runbook_url: {{ $runbook }}#weirgroupunavailable
@@ -28,6 +30,8 @@ spec:
           for: 10m
           labels:
             severity: warning
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
           annotations:
             summary: "Prometheus cannot scrape {{`{{ $labels.instance }}`}} of {{ $group }}."
             runbook_url: {{ $runbook }}#weirscrapefailing
@@ -36,6 +40,8 @@ spec:
           for: 10m
           labels:
             severity: warning
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
           annotations:
             summary: "Replica {{`{{ $labels.instance }}`}} of {{ $group }} keeps refusing work under memory pressure."
             runbook_url: {{ $runbook }}#weirmemorypressure
@@ -44,6 +50,8 @@ spec:
           for: 10m
           labels:
             severity: warning
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
           annotations:
             summary: "{{ $group }} keeps refusing RPCs at admission ({{`{{ $labels.reason }}`}})."
             runbook_url: {{ $runbook }}#weiradmissionrejections
@@ -52,6 +60,8 @@ spec:
           for: 10m
           labels:
             severity: warning
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
           annotations:
             summary: "Store {{`{{ $labels.store }}`}} of {{ $group }} keeps refusing records ({{`{{ $labels.reason }}`}})."
             runbook_url: {{ $runbook }}#weirstorerejections
@@ -60,6 +70,8 @@ spec:
           for: 10m
           labels:
             severity: warning
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
           annotations:
             summary: "Store {{`{{ $labels.store }}`}} of {{ $group }} keeps ending mutations with an unknown outcome."
             runbook_url: {{ $runbook }}#weirunknownoutcomes
@@ -70,6 +82,8 @@ spec:
           for: 15m
           labels:
             severity: warning
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
           annotations:
             summary: "More than 5% of records of Store {{`{{ $labels.store }}`}} in {{ $group }} end with a failure."
             runbook_url: {{ $runbook }}#weirrecordfailures
@@ -78,6 +92,8 @@ spec:
           for: 10m
           labels:
             severity: warning
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
           annotations:
             summary: "Records of Store {{`{{ $labels.store }}`}} in {{ $group }} wait more than a second before dispatch."
             runbook_url: {{ $runbook }}#weirqueuewaithigh
@@ -86,6 +102,8 @@ spec:
           for: 10m
           labels:
             severity: warning
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
           annotations:
             summary: "{{ $group }} keeps ending stalled RPCs ({{`{{ $labels.phase }}`}})."
             runbook_url: {{ $runbook }}#weirwatchdogexpirations

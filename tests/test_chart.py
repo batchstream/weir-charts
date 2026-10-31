@@ -321,6 +321,8 @@ class ChartTests(unittest.TestCase):
             with self.subTest(alert=alert["alert"]):
                 self.assertIn(selector, alert["expr"])
                 self.assertIn(alert["labels"]["severity"], {"critical", "warning"})
+                self.assertEqual(alert["labels"]["namespace"], "application")
+                self.assertEqual(alert["labels"]["weir_group"], "application/mongo")
                 self.assertTrue(alert["annotations"]["runbook_url"].endswith("#" + alert["alert"].lower()))
                 self.assertIn("application/mongo", alert["annotations"]["summary"])
         configuration = resources["ConfigMaps"]["mongo-weir-dashboard"]
