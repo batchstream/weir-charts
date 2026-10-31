@@ -1,0 +1,161 @@
+# Real PromQL semantics for the alerts rendered with examples/prometheus-alerts.yaml
+# (release mongo, namespace application). The test writes the rendered rules
+# next to a copy of this file as alerts.rules.yaml.
+rule_files: [alerts.rules.yaml]
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  input_series:
+  - series: weir_node_ready{namespace="application",weir_group="application/mongo",instance="a:7449"}
+    values: 1x30
+  - series: weir_node_ready{namespace="application",weir_group="application/mongo",instance="b:7449"}
+    values: 0x30
+  - series: weir_node_ready{namespace="application",weir_group="application/search",instance="c:7449"}
+    values: 0x30
+  - series: up{namespace="application",weir_group="application/mongo",instance="a:7449"}
+    values: 1x30
+  - series: up{namespace="application",weir_group="application/mongo",instance="b:7449"}
+    values: 0x30
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: WeirGroupUnavailable
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: WeirScrapeFailing
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: WeirScrapeFailing
+    exp_alerts:
+    - exp_labels: {severity: warning, namespace: application, weir_group: application/mongo, instance: "b:7449"}
+      exp_annotations:
+        summary: Prometheus cannot scrape b:7449 of application/mongo.
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirscrapefailing
+
+# No visible replica of this group, even while another group is Ready.
+- interval: 1m
+  input_series:
+  - series: weir_node_ready{namespace="application",weir_group="application/search",instance="c:7449"}
+    values: 1x30
+  alert_rule_test:
+  - eval_time: 1m
+    alertname: WeirGroupUnavailable
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: WeirGroupUnavailable
+    exp_alerts:
+    - exp_labels: {severity: critical, namespace: application, weir_group: application/mongo}
+      exp_annotations:
+        summary: Store group application/mongo has no Ready replica that Prometheus can scrape.
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirgroupunavailable
+
+# Steady unknown outcomes alert; a single failover burst does not.
+- interval: 1m
+  input_series:
+  - series: weir_store_records_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",operation="mutate",outcome="unknown"}
+    values: 0+10x30
+  - series: weir_store_records_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="burst",operation="mutate",outcome="unknown"}
+    values: 0x1 50x30
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: WeirUnknownOutcomes
+    exp_alerts:
+    - exp_labels: {severity: warning, store: primary, namespace: application, weir_group: application/mongo}
+      exp_annotations:
+        summary: Store primary of application/mongo keeps ending mutations with an unknown outcome.
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirunknownoutcomes
+
+- interval: 1m
+  input_series:
+  - series: weir_store_records_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",operation="mutate",outcome="applied"}
+    values: 0+100x30
+  - series: weir_store_record_failures_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",operation="mutate"}
+    values: 0+10x30
+  - series: weir_store_records_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="healthy",operation="mutate",outcome="applied"}
+    values: 0+100x30
+  - series: weir_store_record_failures_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="healthy",operation="mutate"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: WeirRecordFailures
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: WeirRecordFailures
+    exp_alerts:
+    - exp_labels: {severity: warning, store: primary, namespace: application, weir_group: application/mongo}
+      exp_annotations:
+        summary: More than 5% of records of Store primary in application/mongo end with a failure.
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirrecordfailures
+
+# Draining refusals during rollouts never alert.
+- interval: 1m
+  input_series:
+  - series: weir_store_rejections_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",reason="draining"}
+    values: 0+100x30
+  - series: weir_store_rejections_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",reason="overload"}
+    values: 0+1x30
+  - series: weir_admission_rejections_total{namespace="application",weir_group="application/mongo",instance="a:7449",reason="draining"}
+    values: 0+100x30
+  - series: weir_admission_rejections_total{namespace="application",weir_group="application/mongo",instance="a:7449",reason="overload"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: WeirStoreRejections
+    exp_alerts:
+    - exp_labels: {severity: warning, store: primary, reason: overload, namespace: application, weir_group: application/mongo}
+      exp_annotations:
+        summary: Store primary of application/mongo keeps refusing records (overload).
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirstorerejections
+  - eval_time: 12m
+    alertname: WeirAdmissionRejections
+    exp_alerts:
+    - exp_labels: {severity: warning, reason: overload, namespace: application, weir_group: application/mongo}
+      exp_annotations:
+        summary: application/mongo keeps refusing RPCs at admission (overload).
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weiradmissionrejections
+
+# One record in ten waits between 1 and 10 seconds in primary; fast never waits.
+- interval: 1m
+  input_series:
+  - series: weir_store_queue_wait_seconds_bucket{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",le="1"}
+    values: 0+90x30
+  - series: weir_store_queue_wait_seconds_bucket{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",le="10"}
+    values: 0+100x30
+  - series: weir_store_queue_wait_seconds_bucket{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",le="+Inf"}
+    values: 0+100x30
+  - series: weir_store_queue_wait_seconds_bucket{namespace="application",weir_group="application/mongo",instance="a:7449",store="fast",le="0.01"}
+    values: 0+100x30
+  - series: weir_store_queue_wait_seconds_bucket{namespace="application",weir_group="application/mongo",instance="a:7449",store="fast",le="+Inf"}
+    values: 0+100x30
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: WeirQueueWaitHigh
+    exp_alerts:
+    - exp_labels: {severity: warning, store: primary, namespace: application, weir_group: application/mongo}
+      exp_annotations:
+        summary: Records of Store primary in application/mongo wait more than a second before dispatch.
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirqueuewaithigh
+
+# Memory pressure that flaps within each five minutes still alerts.
+- interval: 1m
+  input_series:
+  - series: weir_memory_overloaded{namespace="application",weir_group="application/mongo",instance="a:7449"}
+    values: 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0
+  - series: weir_memory_overloaded{namespace="application",weir_group="application/mongo",instance="b:7449"}
+    values: 0x30
+  - series: weir_watchdog_expirations_total{namespace="application",weir_group="application/mongo",instance="a:7449",phase="output"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: WeirMemoryPressure
+    exp_alerts:
+    - exp_labels: {severity: warning, namespace: application, weir_group: application/mongo, instance: "a:7449"}
+      exp_annotations:
+        summary: Replica a:7449 of application/mongo keeps refusing work under memory pressure.
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirmemorypressure
+  - eval_time: 12m
+    alertname: WeirWatchdogExpirations
+    exp_alerts:
+    - exp_labels: {severity: warning, phase: output, namespace: application, weir_group: application/mongo}
+      exp_annotations:
+        summary: application/mongo keeps ending stalled RPCs (output).
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirwatchdogexpirations

@@ -1,0 +1,27 @@
+# Overlay examples/mongo.yaml; release mongo, namespace application.
+# Install Prometheus Operator and Grafana's dashboard sidecar separately, then
+# match their selectors with these labels.
+metrics:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - {protocol: TCP, port: metrics}
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: monitoring
+  prometheusRule:
+    enabled: true
+    labels:
+      release: monitoring
+  grafanaDashboard:
+    enabled: true
+    labels:
+      grafana_dashboard: "1"

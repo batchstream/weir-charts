@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -30,6 +31,8 @@ def render(values=None, success=True, release="weir", namespace="default"):
     documents = [item for item in yaml.safe_load_all(result.stdout) if item]
     resources = {item["kind"]: item for item in documents}
     resources["Services"] = {item["metadata"]["name"]: item for item in documents if item["kind"] == "Service"}
+    resources["ConfigMaps"] = {item["metadata"]["name"]: item for item in documents if item["kind"] == "ConfigMap"}
+    resources["ConfigMap"] = next(item for item in documents if item["kind"] == "ConfigMap" and "weir.yaml" in item["data"])
     return resources
 
 
@@ -48,6 +51,14 @@ def render_notes(values, release, namespace):
                    "-f", str(ROOT / "tests/values.yaml"), "-f", str(values_file)]
         result = subprocess.run(command, capture_output=True, text=True, check=True)
     return yaml.safe_load(result.stdout)["notes"]
+
+
+def promtool():
+    """Return the promtool binary named by PROMTOOL or found on PATH, if any."""
+    named = os.environ.get("PROMTOOL")
+    if named:
+        return named
+    return shutil.which("promtool")
 
 
 def weir_config(resources):
@@ -298,6 +309,54 @@ class ChartTests(unittest.TestCase):
             for expression in scenario["promql_expr_test"]:
                 self.assertEqual(expression["expr"], query)
 
+    def test_alerts_and_dashboard_select_only_this_group(self):
+        values = yaml.safe_load((ROOT / "examples/prometheus-alerts.yaml").read_text())
+        resources = render(values, release="mongo", namespace="application")
+        selector = 'namespace="application",weir_group="application/mongo"'
+        rule = resources["PrometheusRule"]
+        self.assertEqual(rule["metadata"]["labels"]["release"], "monitoring")
+        alerts = rule["spec"]["groups"][0]["rules"]
+        self.assertEqual(len({alert["alert"] for alert in alerts}), len(alerts))
+        for alert in alerts:
+            with self.subTest(alert=alert["alert"]):
+                self.assertIn(selector, alert["expr"])
+                self.assertIn(alert["labels"]["severity"], {"critical", "warning"})
+                self.assertEqual(alert["labels"]["namespace"], "application")
+                self.assertEqual(alert["labels"]["weir_group"], "application/mongo")
+                self.assertTrue(alert["annotations"]["runbook_url"].endswith("#" + alert["alert"].lower()))
+                self.assertIn("application/mongo", alert["annotations"]["summary"])
+        configuration = resources["ConfigMaps"]["mongo-weir-dashboard"]
+        self.assertEqual(configuration["metadata"]["labels"]["grafana_dashboard"], "1")
+        dashboard = json.loads(configuration["data"]["weir.json"])
+        self.assertEqual(dashboard["title"], "Weir application/mongo")
+        self.assertLessEqual(len(dashboard["uid"]), 40)
+        other = render(values, release="search", namespace="application")["ConfigMaps"]["search-weir-dashboard"]
+        self.assertNotEqual(json.loads(other["data"]["weir.json"])["uid"], dashboard["uid"])
+        for panel in dashboard["panels"]:
+            for target in panel["targets"]:
+                with self.subTest(panel=panel["title"], query=target["refId"]):
+                    self.assertIn(selector, target["expr"])
+                    self.assertNotIn("WEIR_", target["expr"])
+        disabled = render({"metrics": {"enabled": False}, "networkPolicy": {"enabled": False}})
+        self.assertNotIn("PrometheusRule", disabled)
+
+    def test_promtool_checks_the_rendered_alerts_and_the_autoscaling_query(self):
+        binary = promtool()
+        if not binary:
+            self.skipTest("promtool is not installed; CI sets PROMTOOL")
+        values = yaml.safe_load((ROOT / "examples/prometheus-alerts.yaml").read_text())
+        rule = render(values, release="mongo", namespace="application")["PrometheusRule"]
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory) / "alerts.test.yaml"
+            shutil.copy(ROOT / "tests/prometheus/alerts.test.yaml", fixture)
+            (Path(directory) / "alerts.rules.yaml").write_text(yaml.safe_dump(rule["spec"]))
+            fixtures = [str(fixture), str(ROOT / "tests/prometheus/autoscaling-query.test.yaml")]
+            result = subprocess.run([binary, "test", "rules", *fixtures], capture_output=True, text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        scenarios = yaml.safe_load((ROOT / "tests/prometheus/alerts.test.yaml").read_text())["tests"]
+        tested = {test["alertname"] for scenario in scenarios for test in scenario.get("alert_rule_test", [])}
+        self.assertEqual(tested, {alert["alert"] for alert in rule["spec"]["groups"][0]["rules"]})
+
     def test_inline_auth_userinfo_and_writable_mounts_are_rejected(self):
         for adapter, endpoint in (("mongodb", {"uri": "mongodb://mongo:27017"}), ("search", {"url": "https://search:9200"})):
             store = {"name": adapter, adapter: endpoint, "authentication": {"username": "test-user", "password": "test-password"}}
@@ -486,6 +545,9 @@ class ChartTests(unittest.TestCase):
                 self.assertIn(install, commands)
                 make = next(command for command in commands if command.startswith("make "))
                 self.assertTrue(make.endswith('WEIR_BIN="$PWD/.bin/weir"'), make)
+                make_step = next(step for step in steps if step.get("run", "").startswith("make "))
+                self.assertEqual(make_step["env"]["PROMTOOL"], "${{ github.workspace }}/.bin/promtool")
+                self.assertTrue(any("promtool" in command and "sha256sum -c" in command for command in commands))
 
     def test_unknown_keys_are_rejected_in_every_strict_object(self):
         schema = json.loads((ROOT / "charts/weir/values.schema.json").read_text())
@@ -509,6 +571,9 @@ class ChartTests(unittest.TestCase):
         cases = [
             {"metrics": {"enabled": True}}, {"metrics": {"serviceMonitor": {"enabled": True}}},
             {"metrics": {"serviceMonitor": {"labels": {"app.kubernetes.io/instance": "other"}}}},
+            {"metrics": {"prometheusRule": {"enabled": True}}}, {"metrics": {"grafanaDashboard": {"enabled": True}}},
+            {"metrics": {"prometheusRule": {"labels": {"helm.sh/chart": "other"}}}},
+            {"metrics": {"grafanaDashboard": {"labels": {"app.kubernetes.io/name": "other"}}}},
             {"replicaCount": 0},
             {"minReadySeconds": -1}, {"minReadySeconds": 2147483646}, {"minReadySeconds": 2147483647}, {"terminationGracePeriodSeconds": 20},
             {"progressDeadlineSeconds": 0}, {"progressDeadlineSeconds": 2147483648},

@@ -33,7 +33,14 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Install the Weir contract validator
         run: GOBIN="$PWD/.bin" go install github.com/batchstream/weir/cmd/weir@b0687cc450fb0133a0b2e0592a5058ec797ba47f
+      - name: Install promtool
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/prometheus.tar.gz" https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-3.15.1.linux-amd64.tar.gz
+          echo "6a726885328ad9efebbf36e876ce2fb6225468a71fd1e7ce3ba666d5f4d97a84  $RUNNER_TEMP/prometheus.tar.gz" | sha256sum -c -
+          tar xzf "$RUNNER_TEMP/prometheus.tar.gz" --strip-components=1 -C .bin prometheus-3.15.1.linux-amd64/promtool
       - run: make package WEIR_BIN="$PWD/.bin/weir"
+        env:
+          PROMTOOL: ${{ github.workspace }}/.bin/promtool
       - name: Check version
         run: test "$GITHUB_REF_NAME" = "weir-$(helm show chart charts/weir | awk '/^version:/ {print $2}')"
       - name: Checksum release archive
