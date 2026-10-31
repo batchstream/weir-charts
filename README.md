@@ -31,7 +31,7 @@ helm upgrade --install search ./charts/weir --namespace application \
   --kube-context your-context -f examples/search.yaml --atomic --wait --timeout 5m
 ```
 
-The Chart generates `weir.yaml` with the listeners, `shutdown_timeout` and `stores`. Clients connect with `weir.New` to the group's headless Service, `<release>-weir.<namespace>.svc:<service.port>`. It resolves to every Ready Pod, and the SDK spreads business RPCs across them. Weir ends each client connection after about five minutes; the SDK then re-resolves the name, so Pods added by a scale-out or rollout receive calls within that window. Generated `[::]` listeners accept IPv4 and IPv6 on the supported Go runtime. Group identity is `namespace/release`, so metric labels remain stable when `fullnameOverride` changes. The Service selects only its release. Allow clients to reach each group's application port.
+The Chart generates `weir.yaml` with the listeners, `shutdown_timeout` and `stores`. Clients use [weir-go](https://github.com/batchstream/weir-go) v0.19.0, which speaks this server's protocol, and connect with `weir.New` to the group's headless Service, `<release>-weir.<namespace>.svc:<service.port>`. It resolves to every Ready Pod, and the SDK spreads business RPCs across them. Weir ends each client connection after about five minutes; the SDK then re-resolves the name, so Pods added by a scale-out or rollout receive calls within that window. Generated `[::]` listeners accept IPv4 and IPv6 on the supported Go runtime. Group identity is `namespace/release`, so metric labels remain stable when `fullnameOverride` changes. The Service selects only its release. Allow clients to reach each group's application port.
 
 ## Configuration and credentials
 
