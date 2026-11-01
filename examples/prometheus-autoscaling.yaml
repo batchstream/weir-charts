@@ -29,13 +29,14 @@ autoscaling:
       metricType: AverageValue
       metadata:
         serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
-        # A single group-wide value, only while every discovered scrape target is healthy.
-        # HPA AverageValue divides it across replicas. Verify target coverage separately.
+        # The group's CPU in cores, only while every discovered scrape target is
+        # healthy. HPA AverageValue divides it across replicas. Verify target
+        # coverage separately.
         query: >-
-          (sum(weir_store_queued_operations{namespace="application",weir_group="application/mongo"})
-          + sum(weir_store_active_executions{namespace="application",weir_group="application/mongo"}))
+          sum(rate(process_cpu_seconds_total{namespace="application",weir_group="application/mongo"}[1m]))
           and on() (min(up{namespace="application",weir_group="application/mongo"}) == 1)
-        threshold: "32"
+        # 70% of the default 2-CPU limit per replica.
+        threshold: "1.4"
         ignoreNullValues: "false"
         # Bound the HTTP request; a failed or empty query must remain an error.
         timeout: "10000"

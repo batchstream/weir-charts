@@ -257,7 +257,7 @@
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Active executions and queued operations",
+      "title": "Active executions, Natives and queued operations",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -310,6 +310,24 @@
           "expr": "sum by (store) (weir_store_queued_operations{WEIR_SELECTOR})",
           "legendFormat": "{{store}} queued",
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (store) (weir_store_active_natives{WEIR_SELECTOR})",
+          "legendFormat": "{{store}} active Natives",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (store) (weir_store_active_natives_limit{WEIR_SELECTOR})",
+          "legendFormat": "{{store}} Native limit",
+          "refId": "E"
         }
       ]
     },
@@ -600,6 +618,88 @@
           },
           "expr": "sum by (store, operation, outcome) (rate(weir_search_http_requests_total{WEIR_SELECTOR}[$__rate_interval]))",
           "legendFormat": "{{store}} {{operation}} {{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Native calls by completion",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (store, completion) (rate(weir_store_native_completions_total{WEIR_SELECTOR}[$__rate_interval]))",
+          "legendFormat": "{{store}} {{completion}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Native call p99",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum by (store, le) (rate(weir_store_native_seconds_bucket{WEIR_SELECTOR}[$__rate_interval])))",
+          "legendFormat": "{{store}} Native",
           "refId": "A"
         }
       ]

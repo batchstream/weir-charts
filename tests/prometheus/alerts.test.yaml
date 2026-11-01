@@ -86,6 +86,34 @@ tests:
         summary: More than 5% of records of Store primary in application/mongo end with a failure.
         runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirrecordfailures
 
+# Natives that never start or break while relaying count; complete responses,
+# whatever their status, do not.
+- interval: 1m
+  input_series:
+  - series: weir_store_native_completions_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",completion="response_complete"}
+    values: 0+90x30
+  - series: weir_store_native_completions_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",completion="not_started"}
+    values: 0+5x30
+  - series: weir_store_native_completions_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="primary",completion="response_incomplete"}
+    values: 0+5x30
+  - series: weir_store_native_completions_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="healthy",completion="response_complete"}
+    values: 0+100x30
+  - series: weir_store_native_completions_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="healthy",completion="not_started"}
+    values: 0+1x30
+  - series: weir_store_native_completions_total{namespace="application",weir_group="application/mongo",instance="a:7449",store="healthy",completion="response_incomplete"}
+    values: 0+1x30
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: WeirNativeFailures
+    exp_alerts: []
+  - eval_time: 17m
+    alertname: WeirNativeFailures
+    exp_alerts:
+    - exp_labels: {severity: warning, store: primary, namespace: application, weir_group: application/mongo}
+      exp_annotations:
+        summary: More than 5% of Native calls of Store primary in application/mongo end without a complete response.
+        runbook_url: https://github.com/batchstream/weir/blob/main/docs/operations.md#weirnativefailures
+
 # Draining refusals during rollouts never alert.
 - interval: 1m
   input_series:

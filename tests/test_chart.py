@@ -155,7 +155,7 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(weir_config(resources)["listeners"], {"application": "[::]:7557", "diagnostics": "[::]:7559"})
         self.assertEqual(set(resources["Services"]), {"custom"})
         notes = render_notes(values, release="payments", namespace="backend")
-        self.assertIn("SDK address (weir.New), resolving to this group's Ready Pods:\ncustom.backend.svc:7557\n", notes)
+        self.assertIn("SDK address (weir.New), resolving to this group's Ready Pods; the trailing dot skips DNS search domains. Replace cluster.local if the cluster uses another domain:\ncustom.backend.svc.cluster.local.:7557\n", notes)
         pod = resources["Deployment"]["spec"]["template"]["spec"]
         self.assertNotIn("env", pod["containers"][0])
         ports = {port["name"]: port["containerPort"] for port in pod["containers"][0]["ports"]}
@@ -509,11 +509,11 @@ class ChartTests(unittest.TestCase):
                         listener.__exit__.assert_called_once()
 
     def test_chart_identity_matches_pinned_image(self):
-        revision = "b89ae1e5e8b073176a9f36a6bb264e3a950c41ac"
-        digest = "sha256:e1f29a7747b5a4ff3a1eb033854b6da50b350cf919aa2cde000dc25463a93c2f"
+        revision = "29b1a85f5a2c2fd062ec10bfc8084117111bce79"
+        digest = "sha256:f167dd3dd33ecae790c35b1ca1f6c4a08ce982982008561e4210cb8b61fa21de"
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
         values = yaml.safe_load((ROOT / "charts/weir/values.yaml").read_text())
-        self.assertEqual(chart["version"], "0.14.0-rc.1")
+        self.assertEqual(chart["version"], "0.15.0-rc.1")
         self.assertEqual(chart["annotations"]["weir.batchstream.io/source-revision"], revision)
         self.assertEqual(values["image"]["repository"], "ghcr.io/batchstream/weir")
         self.assertEqual(values["image"]["digest"], digest)
