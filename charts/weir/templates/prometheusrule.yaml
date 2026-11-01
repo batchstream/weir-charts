@@ -87,6 +87,18 @@ spec:
           annotations:
             summary: "More than 5% of records of Store {{`{{ $labels.store }}`}} in {{ $group }} end with a failure."
             runbook_url: {{ $runbook }}#weirrecordfailures
+        - alert: WeirNativeFailures
+          expr: |-
+            sum by (store) (rate(weir_store_native_completions_total{ {{- $selector -}} ,completion!="response_complete"}[5m]))
+              / sum by (store) (rate(weir_store_native_completions_total{ {{- $selector -}} }[5m])) > 0.05
+          for: 15m
+          labels:
+            severity: warning
+            namespace: {{ .Release.Namespace | quote }}
+            weir_group: {{ $group | quote }}
+          annotations:
+            summary: "More than 5% of Native calls of Store {{`{{ $labels.store }}`}} in {{ $group }} end without a complete response."
+            runbook_url: {{ $runbook }}#weirnativefailures
         - alert: WeirQueueWaitHigh
           expr: histogram_quantile(0.99, sum by (store, le) (rate(weir_store_queue_wait_seconds_bucket{ {{- $selector -}} }[5m]))) > 1
           for: 10m
