@@ -155,7 +155,7 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(weir_config(resources)["listeners"], {"application": "[::]:7557", "diagnostics": "[::]:7559"})
         self.assertEqual(set(resources["Services"]), {"custom"})
         notes = render_notes(values, release="payments", namespace="backend")
-        self.assertIn("SDK address (weir.New), resolving to this group's Ready Pods:\ncustom.backend.svc:7557\n", notes)
+        self.assertIn("SDK address (weir.New), resolving to this group's Ready Pods; the trailing dot skips DNS search domains, and a cluster domain other than cluster.local replaces it:\ncustom.backend.svc.cluster.local.:7557\n", notes)
         pod = resources["Deployment"]["spec"]["template"]["spec"]
         self.assertNotIn("env", pod["containers"][0])
         ports = {port["name"]: port["containerPort"] for port in pod["containers"][0]["ports"]}

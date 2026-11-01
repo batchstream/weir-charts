@@ -1,6 +1,6 @@
 Store group: {{ include "weir.group" . }}
-SDK address (weir.New), resolving to this group's Ready Pods:
-{{ include "weir.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+SDK address (weir.New), resolving to this group's Ready Pods; the trailing dot skips DNS search domains, and a cluster domain other than cluster.local replaces it:
+{{ include "weir.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local.:{{ .Values.service.port }}
 {{- if .Values.metrics.serviceMonitor.enabled }}
 ServiceMonitor requires an installed Prometheus Operator and a Prometheus selector accepting its labels.
 {{- end }}
