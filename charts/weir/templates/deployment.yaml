@@ -24,6 +24,12 @@ metadata:
 spec:
   {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- else }}
+  {{- /* KEDA owns the count. Writing back the live count keeps an upgrade from
+  dropping the field, which would reset a running Deployment to one replica. */}}
+  {{- with lookup "apps/v1" "Deployment" .Release.Namespace (include "weir.fullname" .) }}
+  replicas: {{ .spec.replicas }}
+  {{- end }}
   {{- end }}
   minReadySeconds: {{ .Values.minReadySeconds }}
   progressDeadlineSeconds: {{ $progress }}

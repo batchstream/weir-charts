@@ -1,86 +1,58 @@
 # Real PromQL semantics for the query in examples/prometheus-autoscaling.yaml.
 # Failed samples, stale samples and absent up must not become valid lower load.
 rule_files: []
-evaluation_interval: 1m
+evaluation_interval: 30s
 tests:
-- interval: 1m
+# Four replicas each use one core. While replica d fails its scrape and its
+# samples go stale, the query is empty rather than three cores.
+- interval: 30s
   input_series:
-  - series: weir_store_queued_operations{namespace="application",weir_group="application/mongo",pod="a",store="primary"}
-    values: 32 32 32 32
-  - series: weir_store_active_executions{namespace="application",weir_group="application/mongo",pod="a",store="primary"}
-    values: 0 0 0 0
-  - series: up{namespace="application",weir_group="application/mongo",pod="a"}
-    values: 1 1 1 1
-  - series: weir_store_queued_operations{namespace="application",weir_group="application/mongo",pod="b",store="primary"}
-    values: 32 32 32 32
-  - series: weir_store_active_executions{namespace="application",weir_group="application/mongo",pod="b",store="primary"}
-    values: 0 0 0 0
-  - series: up{namespace="application",weir_group="application/mongo",pod="b"}
-    values: 1 1 1 1
-  - series: weir_store_queued_operations{namespace="application",weir_group="application/mongo",pod="c",store="primary"}
-    values: 32 32 32 32
-  - series: weir_store_active_executions{namespace="application",weir_group="application/mongo",pod="c",store="primary"}
-    values: 0 0 0 0
-  - series: up{namespace="application",weir_group="application/mongo",pod="c"}
-    values: 1 1 1 1
-  - series: weir_store_queued_operations{namespace="application",weir_group="application/mongo",pod="d",store="primary"}
-    values: 32 32 stale 32
-  - series: weir_store_active_executions{namespace="application",weir_group="application/mongo",pod="d",store="primary"}
-    values: 0 0 stale 0
-  - series: up{namespace="application",weir_group="application/mongo",pod="d"}
-    values: 1 0 0 1
-  - series: weir_store_queued_operations{namespace="application",weir_group="application/search",pod="other",store="primary"}
-    values: 1000 1000 1000 1000
-  - series: up{namespace="application",weir_group="application/search",pod="other"}
-    values: 0 0 0 0
+  - series: 'process_cpu_seconds_total{namespace="application",weir_group="application/mongo",pod="a"}'
+    values: 0+30x16
+  - series: 'up{namespace="application",weir_group="application/mongo",pod="a"}'
+    values: 1x16
+  - series: 'process_cpu_seconds_total{namespace="application",weir_group="application/mongo",pod="b"}'
+    values: 0+30x16
+  - series: 'up{namespace="application",weir_group="application/mongo",pod="b"}'
+    values: 1x16
+  - series: 'process_cpu_seconds_total{namespace="application",weir_group="application/mongo",pod="c"}'
+    values: 0+30x16
+  - series: 'up{namespace="application",weir_group="application/mongo",pod="c"}'
+    values: 1x16
+  - series: 'process_cpu_seconds_total{namespace="application",weir_group="application/mongo",pod="d"}'
+    values: 0+30x4 stale _x2 240+30x8
+  - series: 'up{namespace="application",weir_group="application/mongo",pod="d"}'
+    values: 1x4 0x2 1x8
+  - series: 'process_cpu_seconds_total{namespace="application",weir_group="application/search",pod="other"}'
+    values: 0+1200x16
+  - series: 'up{namespace="application",weir_group="application/search",pod="other"}'
+    values: 0x16
   promql_expr_test:
-  - expr: (sum(weir_store_queued_operations{namespace="application",weir_group="application/mongo"})
-      + sum(weir_store_active_executions{namespace="application",weir_group="application/mongo"}))
-      and on() (min(up{namespace="application",weir_group="application/mongo"}) ==
-      1)
-    eval_time: 0m
+  - expr: "sum(rate(process_cpu_seconds_total{namespace=\"application\",weir_group=\"application/mongo\"}[1m])) and on() (min(up{namespace=\"application\",weir_group=\"application/mongo\"}) == 1)"
+    eval_time: 1m30s
     exp_samples:
     - labels: '{}'
-      value: 128
-  - expr: (sum(weir_store_queued_operations{namespace="application",weir_group="application/mongo"})
-      + sum(weir_store_active_executions{namespace="application",weir_group="application/mongo"}))
-      and on() (min(up{namespace="application",weir_group="application/mongo"}) ==
-      1)
-    eval_time: 1m
-    exp_samples: []
-  - expr: (sum(weir_store_queued_operations{namespace="application",weir_group="application/mongo"})
-      + sum(weir_store_active_executions{namespace="application",weir_group="application/mongo"}))
-      and on() (min(up{namespace="application",weir_group="application/mongo"}) ==
-      1)
-    eval_time: 2m
-    exp_samples: []
-  - expr: (sum(weir_store_queued_operations{namespace="application",weir_group="application/mongo"})
-      + sum(weir_store_active_executions{namespace="application",weir_group="application/mongo"}))
-      and on() (min(up{namespace="application",weir_group="application/mongo"}) ==
-      1)
+      value: 4
+  - expr: "sum(rate(process_cpu_seconds_total{namespace=\"application\",weir_group=\"application/mongo\"}[1m])) and on() (min(up{namespace=\"application\",weir_group=\"application/mongo\"}) == 1)"
     eval_time: 3m
+    exp_samples: []
+  - expr: "sum(rate(process_cpu_seconds_total{namespace=\"application\",weir_group=\"application/mongo\"}[1m])) and on() (min(up{namespace=\"application\",weir_group=\"application/mongo\"}) == 1)"
+    eval_time: 5m
     exp_samples:
     - labels: '{}'
-      value: 128
-- interval: 1m
+      value: 4
+# CPU samples without any up series are not a valid lower load.
+- interval: 30s
   input_series:
-  - series: weir_store_queued_operations{namespace="application",weir_group="application/mongo",pod="a",store="primary"}
-    values: '32'
-  - series: weir_store_active_executions{namespace="application",weir_group="application/mongo",pod="a",store="primary"}
-    values: '0'
+  - series: 'process_cpu_seconds_total{namespace="application",weir_group="application/mongo",pod="a"}'
+    values: 0+30x8
   promql_expr_test:
-  - expr: (sum(weir_store_queued_operations{namespace="application",weir_group="application/mongo"})
-      + sum(weir_store_active_executions{namespace="application",weir_group="application/mongo"}))
-      and on() (min(up{namespace="application",weir_group="application/mongo"}) ==
-      1)
-    eval_time: 0m
+  - expr: "sum(rate(process_cpu_seconds_total{namespace=\"application\",weir_group=\"application/mongo\"}[1m])) and on() (min(up{namespace=\"application\",weir_group=\"application/mongo\"}) == 1)"
+    eval_time: 1m30s
     exp_samples: []
-- interval: 1m
+- interval: 30s
   input_series: []
   promql_expr_test:
-  - expr: (sum(weir_store_queued_operations{namespace="application",weir_group="application/mongo"})
-      + sum(weir_store_active_executions{namespace="application",weir_group="application/mongo"}))
-      and on() (min(up{namespace="application",weir_group="application/mongo"}) ==
-      1)
+  - expr: "sum(rate(process_cpu_seconds_total{namespace=\"application\",weir_group=\"application/mongo\"}[1m])) and on() (min(up{namespace=\"application\",weir_group=\"application/mongo\"}) == 1)"
     eval_time: 0m
     exp_samples: []
