@@ -51,7 +51,8 @@ def validate_config(binary, resources, directory):
 
 def batching_policy():
     """Return valid values for every batching key."""
-    policy = {"max_operations": 64, "max_bytes": "2MiB", "max_wait": "0s", "max_in_flight": 8}
+    policy = {"max_operations": 64, "max_bytes": "2MiB", "max_wait": "0s", "max_in_flight": 8,
+              "min_in_flight": 2}
     return policy
 
 

@@ -703,6 +703,56 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Adaptive execution limit and latency ratio",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "weir_store_adaptive_executions_limit{WEIR_SELECTOR}",
+          "legendFormat": "{{instance}} {{store}} {{operation}} limit",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "weir_store_execution_latency_ratio{WEIR_SELECTOR}",
+          "legendFormat": "{{instance}} {{store}} {{operation}} ratio",
+          "refId": "B"
+        }
+      ]
     }
   ]
 }
