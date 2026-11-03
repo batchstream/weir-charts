@@ -1,0 +1,19 @@
+# Added to examples/search.yaml: resources that fit a kind node and the metrics the
+# soak client samples. Every rollout setting stays the Chart's default.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+metrics:
+  enabled: true
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              weir-client: "true"
+      ports:
+        - protocol: TCP
+          port: metrics

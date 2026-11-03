@@ -37,3 +37,32 @@ jobs:
         with:
           name: weir-chart
           path: dist/*.tgz
+  upgrade:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.17.0
+      - name: Install kind and the soak client
+        run: |
+          GOBIN="$PWD/.bin" go install sigs.k8s.io/kind@v0.33.0
+          GOBIN="$PWD/.bin" CGO_ENABLED=0 go install github.com/batchstream/weir-tests/cmd/weir-soak@8a4a1125784b7649e4e9f6ae50b96020530b646f
+      - name: Extract the commit this change replaces
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/base"
+          git archive "$BASE" | tar -x -C "$RUNNER_TEMP/base"
+      - name: Upgrade under load
+        env:
+          KIND: .bin/kind
+        run: scripts/kind-upgrade.sh "$RUNNER_TEMP/base" . .bin/weir-soak
