@@ -1,16 +1,21 @@
 #!/bin/sh
-# usage: kind-upgrade.sh <from-checkout> <to-checkout> <soak-binary>
+# usage: kind-upgrade.sh <from-checkout> <to-checkout> <soak-binary> [<previous-sdk-soak-binary>]
 # Creates a kind cluster of its own and changes a Weir release under load: from
 # one checkout's chart to the other's and back at one replica, a replacement that
-# starts late, up to three replicas, a rollout of the three, and back down. Exits
-# non-zero if a change does not complete, a caller saw any error or an outcome did
-# not hold. It measures no throughput.
+# starts late, up to three replicas, the three back and forward again, and back
+# down. Exits non-zero if a change does not complete, a caller saw any error or an
+# outcome did not hold. It measures no throughput.
 #
-# The soak binary comes from weir-tests, built for the cluster's platform. KIND
-# names the kind binary; helm, kubectl and Docker come from PATH.
+# The soak binaries come from weir-tests, built for the cluster's platform. A
+# second one runs alongside the first with the profiles in PREVIOUS_PROFILES if
+# set, so that clients of both SDKs meet servers of both charts during and between
+# the rollouts. THROUGH_CHECKOUT names a checkout whose chart the release goes
+# through on its first upgrade. KIND names the kind binary; helm, kubectl and
+# Docker come from PATH.
 set -eu
-[ "$#" -eq 3 ] && [ -f "$1/charts/weir/Chart.yaml" ] && [ -f "$2/charts/weir/Chart.yaml" ] && [ -x "$3" ] || { sed -n 2p "$0" >&2; exit 2; }
-FROM=$1 TO=$2 SOAK=$3
+[ "$#" -ge 3 ] && [ -f "$1/charts/weir/Chart.yaml" ] && [ -f "$2/charts/weir/Chart.yaml" ] && [ -x "$3" ] && [ -x "${4:-$3}" ] || { sed -n 2p "$0" >&2; exit 2; }
+FROM=$1 TO=$2 SOAK=$3 PREVIOUS_SOAK=${4:-}
+THROUGH=${THROUGH_CHECKOUT:-$FROM}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 KIND=${KIND:-kind}
 NODE_IMAGE=kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
@@ -23,6 +28,8 @@ SELECTOR=app.kubernetes.io/instance=$RELEASE
 K="kubectl -n $NS"
 PAUSE=${PAUSE:-5}
 TEMPLATE=0
+CLIENTS=current
+[ -z "$PREVIOUS_SOAK" ] || CLIENTS="current previous"
 SOAKING=
 CREATED=
 WORK=$(mktemp -d)
@@ -43,7 +50,9 @@ diagnose() {
   $K get events --sort-by=.lastTimestamp | tail -n 30
   $K logs -l "$SELECTOR" --all-containers --prefix --tail=30
   $K logs search --tail=10
-  $K exec client -- sh -c 'tail -n 5 /work/soak.log; cat /work/soak.json'
+  for client in $CLIENTS; do
+    $K exec client -- sh -c "tail -n 5 /work/$client.log; cat /work/$client.json"
+  done
 }
 
 cleanup() {
@@ -95,9 +104,12 @@ settled() {
 }
 
 check_soak() {
-  if [ -n "$SOAKING" ] && $K exec client -- test -e /work/soak.exit 2>/dev/null; then
-    fail "the soak client ended early"
-  fi
+  [ -n "$SOAKING" ] || return 0
+  for client in $CLIENTS; do
+    if $K exec client -- test -e "/work/$client.exit" 2>/dev/null; then
+      fail "the $client soak client ended early"
+    fi
+  done
 }
 
 settled_while_soaking() {
@@ -152,9 +164,24 @@ pull() {
   done
 }
 
-soak_sampled() { $K exec client -- test -s /work/soak.jsonl 2>/dev/null; }
+# start_soak <client> <binary> <extra-flags> starts a client in the client Pod.
+start_soak() {
+  kubectl cp "$2" "$NS/client:/work/$1.bin"
+  $K exec client -- chmod +x "/work/$1.bin"
+  $K exec client -- sh -c "nohup sh -c '/work/$1.bin -no-errors -weir-address $ADDRESS:7447 -weir-diagnostics $ADDRESS:7449 -search-url http://search:9200 -search-workers 40 -search-rate 400 -keys-per-worker 16 -duration 1h -settle 10s -operation-timeout 5s -sample-interval 10s -stream-lifetime 90s -output /work/$1 $3 & echo \$! > /work/$1.pid; wait \$!; echo \$? > /work/$1.exit' > /work/$1.log 2>&1 &"
+}
 
-soak_finished() { $K exec client -- test -s /work/soak.exit 2>/dev/null; }
+soak_sampled() {
+  for client in $CLIENTS; do
+    $K exec client -- test -s "/work/$client.jsonl" 2>/dev/null || return 1
+  done
+}
+
+soak_finished() {
+  for client in $CLIENTS; do
+    $K exec client -- test -s "/work/$client.exit" 2>/dev/null || return 1
+  done
+}
 
 log "creating cluster $CLUSTER"
 CREATED=yes
@@ -164,19 +191,20 @@ wait_for "the namespace has no service account" 60 namespace_ready
 $K apply -f "$ROOT/tests/kind/fixtures.yaml"
 $K wait --for=condition=Ready --timeout=600s pod/search pod/client
 FIXTURE_IMAGE=$($K get pod client -o jsonpath='{.spec.containers[0].image}')
-kubectl cp "$SOAK" "$NS/client:/work/weir-soak"
-$K exec client -- chmod +x /work/weir-soak
 pull "$FROM"
+pull "$THROUGH"
 pull "$TO"
 
 change "install" "$FROM" 1
 
 # Streams live longer than a one-replica rollout, so they meet each replica's exit.
-$K exec client -- sh -c "nohup sh -c '/work/weir-soak -no-errors -weir-address $ADDRESS:7447 -weir-diagnostics $ADDRESS:7449 -search-url http://search:9200 -search-workers 40 -search-rate 400 -keys-per-worker 16 -duration 1h -settle 10s -operation-timeout 5s -sample-interval 10s -stream-lifetime 90s -output /work/soak & echo \$! > /work/soak.pid; wait \$!; echo \$? > /work/soak.exit' > /work/soak.log 2>&1 &"
+start_soak current "$SOAK" ""
+[ -z "$PREVIOUS_SOAK" ] || start_soak previous "$PREVIOUS_SOAK" "${PREVIOUS_PROFILES:+-profiles $PREVIOUS_PROFILES}"
 SOAKING=yes
 wait_for "the soak client reported no sample" 120 soak_sampled
 check_soak
 
+change "upgrade to the intermediate chart" "$THROUGH" 1 rollout
 change "chart upgrade at one replica" "$TO" 1 rollout
 change "chart rollback at one replica" "$FROM" 1 rollout
 change "chart upgrade at one replica" "$TO" 1 rollout
@@ -184,13 +212,21 @@ change "chart upgrade at one replica" "$TO" 1 rollout
 patch "replacement that starts late" strategic '{"spec":{"template":{"spec":{"initContainers":[{"name":"late-start","image":"'"$FIXTURE_IMAGE"'","command":["sleep","30"]}]}}}}'
 patch "late start removed" json '[{"op":"remove","path":"/spec/template/spec/initContainers"}]'
 change "scale up to three replicas" "$TO" 3
-change "rollout of three replicas" "$TO" 3 rollout
+change "chart rollback at three replicas" "$FROM" 3 rollout
+change "chart upgrade at three replicas" "$TO" 3 rollout
 change "scale down to one replica" "$TO" 1
 
 check_soak
 SOAKING=
-$K exec client -- sh -c 'kill $(cat /work/soak.pid)'
-wait_for "the soak client did not finish" 420 soak_finished
-[ "$($K exec client -- cat /work/soak.exit)" = 0 ] || fail "a caller saw an error or an outcome did not hold"
-$K exec client -- cat /work/soak.json
+passed=yes
+for client in $CLIENTS; do
+  $K exec client -- sh -c "kill \$(cat /work/$client.pid)" || true
+done
+wait_for "the soak clients did not finish" 420 soak_finished
+for client in $CLIENTS; do
+  log "$client SDK client report"
+  $K exec client -- cat "/work/$client.json" || true
+  [ "$($K exec client -- cat "/work/$client.exit")" = 0 ] || { log "FAILED: a caller of the $client SDK saw an error or an outcome did not hold"; passed=; }
+done
+[ -n "$passed" ] || exit 1
 log "passed"
