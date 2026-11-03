@@ -1,0 +1,47 @@
+# The backend examples/mongo.yaml connects to and a Pod for the soak client.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+spec:
+  clusterIP: None
+  selector:
+    app: mongo
+  ports:
+    - port: 27017
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mongo
+  labels:
+    app: mongo
+spec:
+  containers:
+    - name: mongo
+      image: mongo@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c
+      args: ["--replSet", "weir", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+      readinessProbe:
+        exec:
+          command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+        periodSeconds: 2
+        timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  labels:
+    weir-client: "true"
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: client
+      image: mongo@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c
+      command: ["sleep", "infinity"]
+      volumeMounts:
+        - name: work
+          mountPath: /work
+  volumes:
+    - name: work
+      emptyDir: {}

@@ -9,6 +9,7 @@ lint:
 	helm lint charts/weir --strict -f tests/values.yaml -f examples/mongo.yaml -f examples/prometheus-alerts.yaml
 	helm lint charts/weir --strict -f tests/values.yaml -f examples/mongo.yaml -f examples/credential-files.yaml
 	helm lint charts/weir --strict -f tests/values.yaml -f tests/three-replica-values.yaml
+	helm lint charts/weir --strict -f examples/mongo.yaml -f tests/kind/values.yaml
 contract:
 	$(PYTHON) scripts/check-contract.py --binary $(WEIR_BIN)
 test: lint contract
