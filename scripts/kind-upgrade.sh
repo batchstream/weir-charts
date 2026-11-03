@@ -39,6 +39,8 @@ diagnose() {
   $K get pods -o wide
   $K get events --sort-by=.lastTimestamp | tail -n 30
   $K logs -l "$SELECTOR" --all-containers --prefix --tail=30
+  $K logs mongo --previous --tail=30
+  $K logs mongo --tail=30
   $K exec client -- sh -c 'tail -n 5 /work/soak.log; cat /work/soak.json'
 }
 
