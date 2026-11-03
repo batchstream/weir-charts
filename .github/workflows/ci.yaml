@@ -51,18 +51,41 @@ jobs:
       - uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
         with:
           version: v3.17.0
-      - name: Install kind and the soak client
-        run: |
-          GOBIN="$PWD/.bin" go install sigs.k8s.io/kind@v0.33.0
-          GOBIN="$PWD/.bin" CGO_ENABLED=0 go install github.com/batchstream/weir-tests/cmd/weir-soak@8a4a1125784b7649e4e9f6ae50b96020530b646f
-      - name: Extract the commit this change replaces
+      - name: Install kind
+        run: GOBIN="$PWD/.bin" go install sigs.k8s.io/kind@v0.33.0
+      - name: Build the soak client with the current and the previous SDK
         shell: bash
-        env:
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          mkdir -p "$RUNNER_TEMP/base"
-          git archive "$BASE" | tar -x -C "$RUNNER_TEMP/base"
-      - name: Upgrade under load
+          bin=$PWD/.bin
+          git clone -q https://github.com/batchstream/weir-tests "$RUNNER_TEMP/weir-tests"
+          cd "$RUNNER_TEMP/weir-tests"
+          git checkout -q 3206370f8b6cea30e2a265f55b0088b3285742f3
+          CGO_ENABLED=0 go build -o "$bin/weir-soak" ./cmd/weir-soak
+          version=$(jq -er .weir_go_previous versions.json)
+          protocol=$(go mod download -json "github.com/batchstream/weir-go@$version" | jq -er .GoMod | xargs awk '$1 == "github.com/batchstream/weir-protocol" {print $2}')
+          go get "github.com/batchstream/weir-go@$version" "github.com/batchstream/weir-protocol@$protocol"
+          CGO_ENABLED=0 go build -o "$bin/weir-soak-previous" ./cmd/weir-soak
+          go version -m "$bin/weir-soak" | grep weir-go
+          go version -m "$bin/weir-soak-previous" | grep weir-go
+          # Held streams of v0.22.0 fail in a rollout; v0.23.0 fixed them.
+          if [ "$version" = v0.22.0 ]; then
+            echo 'PREVIOUS_PROFILES=single=40,visible=10,lua=15,batch=30,native=5' >> "$GITHUB_ENV"
+          fi
+      - name: Extract the chart of the previous server
+        shell: bash
+        run: |
+          current=$(sed -n 's/^  digest: //p' charts/weir/values.yaml)
+          for commit in $(git log --format=%H -- charts/weir/values.yaml); do
+            digest=$(git show "$commit:charts/weir/values.yaml" | sed -n 's/^  digest: //p')
+            if [ "$digest" != "$current" ]; then
+              echo "previous server $digest in $commit"
+              mkdir -p "$RUNNER_TEMP/previous"
+              git archive "$commit" | tar -x -C "$RUNNER_TEMP/previous"
+              exit 0
+            fi
+          done
+          exit 1
+      - name: Upgrade from the previous server under load from both SDKs
         env:
           KIND: .bin/kind
-        run: scripts/kind-upgrade.sh "$RUNNER_TEMP/base" . .bin/weir-soak
+        run: scripts/kind-upgrade.sh "$RUNNER_TEMP/previous" . .bin/weir-soak .bin/weir-soak-previous
