@@ -60,11 +60,14 @@ preStopDelaySeconds: 15
 # cleanup + one second for final exit.
 # A positive override can reserve more exit overhead and must cover this budget.
 terminationGracePeriodSeconds: 0
+# Each replacement starts before a replica stops, so an upgrade keeps serving at
+# any replica count and a replacement that cannot start leaves the old replicas
+# running. A rollout needs room for one more Pod.
 strategy:
   type: RollingUpdate
   rollingUpdate:
-    maxSurge: 0
-    maxUnavailable: 1
+    maxSurge: 1
+    maxUnavailable: 0
 podDisruptionBudget:
   enabled: false
   maxUnavailable: 1
