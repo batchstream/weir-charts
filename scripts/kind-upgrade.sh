@@ -2,17 +2,20 @@
 # usage: kind-upgrade.sh <from-checkout> <to-checkout> <soak-binary> [<previous-sdk-soak-binary>]
 # Creates a kind cluster of its own and changes a Weir release under load: from
 # one checkout's chart to the other's and back at one replica, a replacement that
-# starts late, up to three replicas, a rollout of the three, and back down. Exits
-# non-zero if a change does not complete, a caller saw any error or an outcome did
-# not hold. It measures no throughput.
+# starts late, up to three replicas, the three back and forward again, and back
+# down. Exits non-zero if a change does not complete, a caller saw any error or an
+# outcome did not hold. It measures no throughput.
 #
 # The soak binaries come from weir-tests, built for the cluster's platform. A
 # second one runs alongside the first with the profiles in PREVIOUS_PROFILES if
 # set, so that clients of both SDKs meet servers of both charts during and between
-# the rollouts. KIND names the kind binary; helm, kubectl and Docker come from PATH.
+# the rollouts. THROUGH_CHECKOUT names a checkout whose chart the release goes
+# through on its first upgrade. KIND names the kind binary; helm, kubectl and
+# Docker come from PATH.
 set -eu
 [ "$#" -ge 3 ] && [ -f "$1/charts/weir/Chart.yaml" ] && [ -f "$2/charts/weir/Chart.yaml" ] && [ -x "$3" ] && [ -x "${4:-$3}" ] || { sed -n 2p "$0" >&2; exit 2; }
 FROM=$1 TO=$2 SOAK=$3 PREVIOUS_SOAK=${4:-}
+THROUGH=${THROUGH_CHECKOUT:-$FROM}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 KIND=${KIND:-kind}
 NODE_IMAGE=kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
@@ -189,6 +192,7 @@ $K apply -f "$ROOT/tests/kind/fixtures.yaml"
 $K wait --for=condition=Ready --timeout=600s pod/search pod/client
 FIXTURE_IMAGE=$($K get pod client -o jsonpath='{.spec.containers[0].image}')
 pull "$FROM"
+pull "$THROUGH"
 pull "$TO"
 
 change "install" "$FROM" 1
@@ -200,6 +204,7 @@ SOAKING=yes
 wait_for "the soak client reported no sample" 120 soak_sampled
 check_soak
 
+change "upgrade to the intermediate chart" "$THROUGH" 1 rollout
 change "chart upgrade at one replica" "$TO" 1 rollout
 change "chart rollback at one replica" "$FROM" 1 rollout
 change "chart upgrade at one replica" "$TO" 1 rollout
@@ -207,19 +212,20 @@ change "chart upgrade at one replica" "$TO" 1 rollout
 patch "replacement that starts late" strategic '{"spec":{"template":{"spec":{"initContainers":[{"name":"late-start","image":"'"$FIXTURE_IMAGE"'","command":["sleep","30"]}]}}}}'
 patch "late start removed" json '[{"op":"remove","path":"/spec/template/spec/initContainers"}]'
 change "scale up to three replicas" "$TO" 3
-change "rollout of three replicas" "$TO" 3 rollout
+change "chart rollback at three replicas" "$FROM" 3 rollout
+change "chart upgrade at three replicas" "$TO" 3 rollout
 change "scale down to one replica" "$TO" 1
 
 check_soak
 SOAKING=
 passed=yes
 for client in $CLIENTS; do
-  $K exec client -- sh -c "kill \$(cat /work/$client.pid)"
+  $K exec client -- sh -c "kill \$(cat /work/$client.pid)" || true
 done
 wait_for "the soak clients did not finish" 420 soak_finished
 for client in $CLIENTS; do
   log "$client SDK client report"
-  $K exec client -- cat "/work/$client.json"
+  $K exec client -- cat "/work/$client.json" || true
   [ "$($K exec client -- cat "/work/$client.exit")" = 0 ] || { log "FAILED: a caller of the $client SDK saw an error or an outcome did not hold"; passed=; }
 done
 [ -n "$passed" ] || exit 1
