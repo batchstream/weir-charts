@@ -1,9 +1,10 @@
 {{- include "weir.validate" . -}}
-{{- /* Weir bounds startup at 30s. The first probe can land anywhere in the first
-native 10s period, so allow two periods beyond that bound. */ -}}
-{{- $nativeProbePeriod := 10 -}}
-{{- $startupFailures := 5 -}}
-{{- $startupBudget := mul $startupFailures $nativeProbePeriod -}}
+{{- /* Weir bounds startup at 30s and usually listens within a second, so probing
+every second makes a replica Ready as soon as it starts. The first probe can land
+anywhere in the first period, so allow two periods beyond that bound. */ -}}
+{{- $startupProbePeriod := 1 -}}
+{{- $startupFailures := 32 -}}
+{{- $startupBudget := mul $startupFailures $startupProbePeriod -}}
 {{- $minimumProgress := add (int .Values.minReadySeconds) $startupBudget -}}
 {{- $progress := int .Values.progressDeadlineSeconds -}}
 {{- if le $progress $minimumProgress -}}
@@ -88,6 +89,7 @@ spec:
             httpGet:
               path: /readyz
               port: metrics
+            periodSeconds: {{ $startupProbePeriod }}
             failureThreshold: {{ $startupFailures }}
           readinessProbe:
             httpGet:

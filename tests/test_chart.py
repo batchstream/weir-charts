@@ -106,8 +106,10 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(container["args"], ["serve", "--config", "/etc/weir/weir.yaml"])
         for name, path in (("startupProbe", "/readyz"), ("readinessProbe", "/readyz"), ("livenessProbe", "/livez")):
             self.assertEqual(container[name]["httpGet"], {"path": path, "port": "metrics"})
-            self.assertNotIn("periodSeconds", container[name])
             self.assertNotIn("timeoutSeconds", container[name])
+        self.assertEqual(container["startupProbe"]["periodSeconds"], 1)
+        self.assertNotIn("periodSeconds", container["readinessProbe"])
+        self.assertNotIn("periodSeconds", container["livenessProbe"])
         self.assertNotIn("failureThreshold", container["readinessProbe"])
         self.assertNotIn("failureThreshold", container["livenessProbe"])
         self.assertNotIn("revisionHistoryLimit", resources["Deployment"]["spec"])
@@ -171,8 +173,8 @@ class ChartTests(unittest.TestCase):
         pod = deployment["template"]["spec"]
         self.assertEqual(pod["terminationGracePeriodSeconds"], 23)
         self.assertEqual(pod["containers"][0]["lifecycle"]["preStop"]["sleep"]["seconds"], 15)
-        self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxSurge"], 0)
-        self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxUnavailable"], 1)
+        self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxSurge"], 1)
+        self.assertEqual(deployment["strategy"]["rollingUpdate"]["maxUnavailable"], 0)
         self.assertEqual(resources["PodDisruptionBudget"]["spec"]["maxUnavailable"], 1)
 
     def test_metrics_generate_listener_and_one_per_pod_monitor(self):
@@ -248,7 +250,7 @@ class ChartTests(unittest.TestCase):
         pod = deployment["template"]["spec"]
         self.assertEqual(deployment["minReadySeconds"], 200)
         probe = pod["containers"][0]["startupProbe"]
-        startup_budget = probe["failureThreshold"] * 10
+        startup_budget = probe["failureThreshold"] * probe["periodSeconds"]
         self.assertEqual(deployment["progressDeadlineSeconds"], 600)
         self.assertEqual(pod["terminationGracePeriodSeconds"], 600)
         self.assertEqual(pod["containers"][0]["lifecycle"]["preStop"]["sleep"]["seconds"], 400)
@@ -264,9 +266,9 @@ class ChartTests(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("must exceed", rejected.stderr)
 
-        values = {"progressDeadlineSeconds": 66}
-        self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 66)
-        values["progressDeadlineSeconds"] = 65
+        values = {"progressDeadlineSeconds": 48}
+        self.assertEqual(render(values)["Deployment"]["spec"]["progressDeadlineSeconds"], 48)
+        values["progressDeadlineSeconds"] = 47
         self.assertNotEqual(render(values, success=False).returncode, 0)
 
     def test_shutdown_timeout_drives_weir_and_pod_grace(self):
@@ -276,9 +278,9 @@ class ChartTests(unittest.TestCase):
         pod = deployment["template"]["spec"]
         # The first probe can land at once, so even the earliest kill must
         # follow Weir's fixed 30s startup bound with a full period to spare.
-        threshold = pod["containers"][0]["startupProbe"]["failureThreshold"]
-        self.assertEqual(threshold, 5)
-        self.assertGreater((threshold - 1) * 10, 30)
+        probe = pod["containers"][0]["startupProbe"]
+        self.assertEqual(probe["failureThreshold"], 32)
+        self.assertGreater((probe["failureThreshold"] - 1) * probe["periodSeconds"], 30)
         self.assertEqual(pod["terminationGracePeriodSeconds"], 153)
         self.assertEqual(weir_config(resources)["shutdown_timeout"], "120s")
 
@@ -424,6 +426,14 @@ class ChartTests(unittest.TestCase):
         self.assertEqual(constraints["nodeTaintsPolicy"], "Honor")
         self.assertEqual(constraints["minDomains"], 2)
 
+    def test_replacement_starts_first_unless_overridden(self):
+        for values in ({}, {"replicaCount": 3}):
+            strategy = render(values)["Deployment"]["spec"]["strategy"]
+            self.assertEqual(strategy["rollingUpdate"], {"maxSurge": 1, "maxUnavailable": 0})
+        values = {"strategy": {"rollingUpdate": {"maxSurge": 0, "maxUnavailable": 1}}}
+        strategy = render(values)["Deployment"]["spec"]["strategy"]
+        self.assertEqual(strategy["rollingUpdate"], {"maxSurge": 0, "maxUnavailable": 1})
+
     def test_recreate_and_disabled_pre_stop_are_rendered_cleanly(self):
         values = {"strategy": {"type": "Recreate"}, "preStopDelaySeconds": 0}
         deployment = render(values)["Deployment"]["spec"]
@@ -513,7 +523,7 @@ class ChartTests(unittest.TestCase):
         digest = "sha256:751540f963a82b227ed499554168d37e19f23e6cf6e67c21ee7fd76b56789d4e"
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
         values = yaml.safe_load((ROOT / "charts/weir/values.yaml").read_text())
-        self.assertEqual(chart["version"], "0.17.0-rc.1")
+        self.assertEqual(chart["version"], "0.18.0-rc.1")
         self.assertEqual(chart["annotations"]["weir.batchstream.io/source-revision"], revision)
         self.assertEqual(values["image"]["repository"], "ghcr.io/batchstream/weir")
         self.assertEqual(values["image"]["digest"], digest)
