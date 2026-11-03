@@ -1,4 +1,4 @@
-# Added to examples/mongo.yaml: resources that fit a kind node and the metrics the
+# Added to examples/search.yaml: resources that fit a kind node and the metrics the
 # soak client samples. Every rollout setting stays the Chart's default.
 resources:
   requests:

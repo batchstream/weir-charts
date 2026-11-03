@@ -1,29 +1,41 @@
-# The backend examples/mongo.yaml connects to and a Pod for the soak client.
+# The backend examples/search.yaml connects to and a Pod for the soak client.
 apiVersion: v1
 kind: Service
 metadata:
-  name: mongo
+  name: search
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   selector:
-    app: mongo
+    app: search
   ports:
-    - port: 27017
+    - port: 9200
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: mongo
+  name: search
   labels:
-    app: mongo
+    app: search
 spec:
   containers:
-    - name: mongo
-      image: mongo@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c
-      args: ["--replSet", "weir", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    - name: search
+      image: docker.elastic.co/elasticsearch/elasticsearch@sha256:e98f9c3b09beb2fbb9eaf667d602df3f0e00bd3644138b8458dc17ba1a675595
+      env:
+        - name: discovery.type
+          value: single-node
+        - name: xpack.security.enabled
+          value: "false"
+        - name: action.auto_create_index
+          value: "false"
+        - name: cluster.routing.allocation.disk.threshold_enabled
+          value: "false"
+        - name: ES_JAVA_OPTS
+          value: -Xms512m -Xmx512m
       readinessProbe:
-        exec:
-          command: ["mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+        httpGet:
+          path: /_cluster/health
+          port: 9200
         periodSeconds: 2
         timeoutSeconds: 10
 ---
@@ -37,8 +49,8 @@ spec:
   terminationGracePeriodSeconds: 1
   containers:
     - name: client
-      image: mongo@sha256:d0d926f94df099bff534b7ee5b5986458131a22489dfff8664509af0c1e2ca9c
-      command: ["sleep", "infinity"]
+      image: busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+      command: ["sleep", "86400"]
       volumeMounts:
         - name: work
           mountPath: /work

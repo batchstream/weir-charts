@@ -1,32 +1,35 @@
 #!/bin/sh
-# usage: kind-upgrade.sh <from-chart> <to-chart> <soak-binary>
+# usage: kind-upgrade.sh <from-checkout> <to-checkout> <soak-binary>
 # Creates a kind cluster of its own and changes a Weir release under load: from
-# one chart to the other and back at one replica, a replacement that starts late,
-# up to three replicas, a rollout of the three, and back down. Exits non-zero if
-# a change does not complete, a caller saw any error or an outcome did not hold.
-# It measures no throughput.
+# one checkout's chart to the other's and back at one replica, a replacement that
+# starts late, up to three replicas, a rollout of the three, and back down. Exits
+# non-zero if a change does not complete, a caller saw any error or an outcome did
+# not hold. It measures no throughput.
 #
 # The soak binary comes from weir-tests, built for the cluster's platform. KIND
 # names the kind binary; helm, kubectl and Docker come from PATH.
 set -eu
-[ "$#" -eq 3 ] && [ -x "$3" ] || { sed -n 2p "$0" >&2; exit 2; }
+[ "$#" -eq 3 ] && [ -f "$1/charts/weir/Chart.yaml" ] && [ -f "$2/charts/weir/Chart.yaml" ] && [ -x "$3" ] || { sed -n 2p "$0" >&2; exit 2; }
 FROM=$1 TO=$2 SOAK=$3
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 KIND=${KIND:-kind}
 NODE_IMAGE=kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
 CLUSTER=weir-upgrade-$$
 NS=weir
-RELEASE=mongo
-ADDRESS=$RELEASE-weir.$NS.svc.cluster.local.
+RELEASE=search
 DEPLOYMENT=$RELEASE-weir
+ADDRESS=$DEPLOYMENT.$NS.svc.cluster.local.
 SELECTOR=app.kubernetes.io/instance=$RELEASE
 K="kubectl -n $NS"
 PAUSE=${PAUSE:-5}
 TEMPLATE=0
+SOAKING=
 CREATED=
 WORK=$(mktemp -d)
-# Every command below talks to this cluster alone, whatever the caller's context is.
+# Every command below talks to this cluster alone, whatever the caller's context
+# and Helm settings are.
 export KUBECONFIG="$WORK/kubeconfig"
+unset HELM_KUBEAPISERVER HELM_KUBEASGROUPS HELM_KUBEASUSER HELM_KUBECAFILE HELM_KUBECONTEXT HELM_KUBEINSECURE_SKIP_TLS_VERIFY HELM_KUBETLS_SERVER_NAME HELM_KUBETOKEN HELM_NAMESPACE
 
 log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
 
@@ -39,8 +42,7 @@ diagnose() {
   $K get pods -o wide
   $K get events --sort-by=.lastTimestamp | tail -n 30
   $K logs -l "$SELECTOR" --all-containers --prefix --tail=30
-  $K logs mongo --previous --tail=30
-  $K logs mongo --tail=30
+  $K logs search --tail=10
   $K exec client -- sh -c 'tail -n 5 /work/soak.log; cat /work/soak.json'
 }
 
@@ -48,6 +50,7 @@ cleanup() {
   code=$?
   set +e
   trap - EXIT
+  trap '' INT TERM
   if [ -n "$CREATED" ]; then
     [ "$code" -eq 0 ] || diagnose
     "$KIND" delete cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG"
@@ -58,7 +61,29 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
+# wait_for <failure> <seconds> <command...>
+wait_for() {
+  failure=$1 deadline=$(($(date +%s) + $2))
+  shift 2
+  until "$@"; do
+    [ "$(date +%s)" -lt "$deadline" ] || fail "$failure"
+    sleep 2
+  done
+}
+
+# A checkout's chart uses that checkout's values, so a change may rename one. A
+# chart that predates the kind values uses the other checkout's.
+kind_values() {
+  if [ -f "$1/tests/kind/values.yaml" ]; then
+    echo "$1/tests/kind/values.yaml"
+  else
+    echo "$TO/tests/kind/values.yaml"
+  fi
+}
+
 pods() { $K get pods -l "$SELECTOR" -o jsonpath='{.items[*].metadata.name}'; }
+
+namespace_ready() { $K get serviceaccount default >/dev/null 2>&1; }
 
 # settled reports that every replica runs the current template and no other Pod
 # remains, terminating ones included.
@@ -70,20 +95,20 @@ settled() {
 }
 
 check_soak() {
-  if [ -n "$SOAKING" ] && $K exec client -- test -e /work/soak.exit; then
+  if [ -n "$SOAKING" ] && $K exec client -- test -e /work/soak.exit 2>/dev/null; then
     fail "the soak client ended early"
   fi
+}
+
+settled_while_soaking() {
+  check_soak
+  settled
 }
 
 # finish <what> <replaced-pods> waits for a change and checks those Pods have left.
 finish() {
   what=$1 replaced=$2
-  deadline=$(($(date +%s) + 300))
-  until settled; do
-    [ "$(date +%s)" -lt "$deadline" ] || fail "$what did not finish"
-    check_soak
-    sleep 2
-  done
+  wait_for "$what did not finish" 300 settled_while_soaking
   now=" $(pods) "
   for pod in $replaced; do
     case $now in *" $pod "*) fail "$what left $pod running" ;; esac
@@ -93,7 +118,7 @@ finish() {
   sleep "$PAUSE"
 }
 
-# change <what> <chart> <replicas> [rollout] applies a change to the release. A
+# change <what> <checkout> <replicas> [rollout] applies a change to the release. A
 # rollout changes the Pod template, so it replaces every replica whether or not
 # the charts differ.
 change() {
@@ -103,7 +128,7 @@ change() {
     replaced=$(pods)
     TEMPLATE=$((TEMPLATE + 1))
   fi
-  helm -n "$NS" upgrade --install "$RELEASE" "$2" -f "$ROOT/examples/mongo.yaml" -f "$ROOT/tests/kind/values.yaml" --set "replicaCount=$WANT" --set-string "podAnnotations.rollout=$TEMPLATE" >/dev/null
+  helm --kube-context "kind-$CLUSTER" -n "$NS" upgrade --install "$RELEASE" "$2/charts/weir" -f "$2/examples/search.yaml" -f "$(kind_values "$2")" --set "replicaCount=$WANT" --set-string "podAnnotations.rollout=$TEMPLATE" >/dev/null
   finish "$1" "$replaced"
 }
 
@@ -114,25 +139,10 @@ patch() {
   finish "$1" "$replaced"
 }
 
-log "creating cluster $CLUSTER"
-"$KIND" create cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" --image "$NODE_IMAGE" --wait 180s
-CREATED=yes
-kubectl create namespace "$NS"
-$K apply -f "$ROOT/tests/kind/fixtures.yaml"
-$K wait --for=condition=Ready --timeout=300s pod/mongo pod/client
-FIXTURE_IMAGE=$($K get pod client -o jsonpath='{.spec.containers[0].image}')
-$K exec mongo -- mongosh --quiet --eval 'rs.initiate({_id: "weir", members: [{_id: 0, host: "mongo:27017"}]})'
-deadline=$(($(date +%s) + 60))
-until [ "$($K exec mongo -- mongosh --quiet --eval 'db.hello().isWritablePrimary')" = true ]; do
-  [ "$(date +%s)" -lt "$deadline" ] || fail "MongoDB elected no primary"
-  sleep 2
-done
-kubectl cp "$SOAK" "$NS/client:/work/weir-soak"
-$K exec client -- chmod +x /work/weir-soak
-
 # A slow or unreliable registry must not use up a rollout's time.
-for chart in "$FROM" "$TO"; do
-  image=$(helm template "$RELEASE" "$chart" -f "$ROOT/examples/mongo.yaml" -f "$ROOT/tests/kind/values.yaml" | sed -n 's/^ *image: *"*\([^"]*\)"*$/\1/p' | head -n 1)
+pull() {
+  image=$(helm template "$RELEASE" "$1/charts/weir" -f "$1/examples/search.yaml" -f "$(kind_values "$1")" | sed -n 's/^ *image: *"*\([^"]*\)"*$/\1/p' | head -n 1)
+  [ -n "$image" ] || fail "the chart in $1 does not render with its values"
   log "pulling $image"
   attempts=5
   until docker exec "$CLUSTER-control-plane" crictl pull "$image" >/dev/null; do
@@ -140,15 +150,31 @@ for chart in "$FROM" "$TO"; do
     [ "$attempts" -gt 0 ] || fail "cannot pull $image"
     sleep 10
   done
-done
+}
 
-SOAKING=
+soak_sampled() { $K exec client -- test -s /work/soak.jsonl 2>/dev/null; }
+
+soak_finished() { $K exec client -- test -s /work/soak.exit 2>/dev/null; }
+
+log "creating cluster $CLUSTER"
+CREATED=yes
+"$KIND" create cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" --image "$NODE_IMAGE" --wait 180s
+kubectl create namespace "$NS"
+wait_for "the namespace has no service account" 60 namespace_ready
+$K apply -f "$ROOT/tests/kind/fixtures.yaml"
+$K wait --for=condition=Ready --timeout=600s pod/search pod/client
+FIXTURE_IMAGE=$($K get pod client -o jsonpath='{.spec.containers[0].image}')
+kubectl cp "$SOAK" "$NS/client:/work/weir-soak"
+$K exec client -- chmod +x /work/weir-soak
+pull "$FROM"
+pull "$TO"
+
 change "install" "$FROM" 1
 
 # Streams live longer than a one-replica rollout, so they meet each replica's exit.
-$K exec client -- sh -c "nohup sh -c '/work/weir-soak -no-errors -weir-address $ADDRESS:7447 -weir-diagnostics $ADDRESS:7449 -mongo-uri mongodb://mongo:27017/?directConnection=true -mongo-workers 40 -mongo-rate 400 -keys-per-worker 16 -duration 1h -settle 10s -operation-timeout 5s -sample-interval 10s -stream-lifetime 90s -output /work/soak & echo \$! > /work/soak.pid; wait \$!; echo \$? > /work/soak.exit' > /work/soak.log 2>&1 &"
+$K exec client -- sh -c "nohup sh -c '/work/weir-soak -no-errors -weir-address $ADDRESS:7447 -weir-diagnostics $ADDRESS:7449 -search-url http://search:9200 -search-workers 40 -search-rate 400 -keys-per-worker 16 -duration 1h -settle 10s -operation-timeout 5s -sample-interval 10s -stream-lifetime 90s -output /work/soak & echo \$! > /work/soak.pid; wait \$!; echo \$? > /work/soak.exit' > /work/soak.log 2>&1 &"
 SOAKING=yes
-sleep 15
+wait_for "the soak client reported no sample" 120 soak_sampled
 check_soak
 
 change "chart upgrade at one replica" "$TO" 1 rollout
@@ -161,12 +187,10 @@ change "scale up to three replicas" "$TO" 3
 change "rollout of three replicas" "$TO" 3 rollout
 change "scale down to one replica" "$TO" 1
 
+check_soak
+SOAKING=
 $K exec client -- sh -c 'kill $(cat /work/soak.pid)'
-deadline=$(($(date +%s) + 420))
-until $K exec client -- test -s /work/soak.exit; do
-  [ "$(date +%s)" -lt "$deadline" ] || fail "the soak client did not finish"
-  sleep 2
-done
+wait_for "the soak client did not finish" 420 soak_finished
 [ "$($K exec client -- cat /work/soak.exit)" = 0 ] || fail "a caller saw an error or an outcome did not hold"
 $K exec client -- cat /work/soak.json
 log "passed"
