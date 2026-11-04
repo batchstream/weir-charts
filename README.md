@@ -30,7 +30,7 @@ MongoDB and Search data plane, on Kubernetes.
 | Chart | `0.20.0-rc.1` |
 | Server source | [commit `5107986b882d`](https://github.com/batchstream/weir/commit/5107986b882da60751403c7e05bbbebdb12b3cdb) |
 | Server image | `ghcr.io/batchstream/weir@sha256:b5d949cefb0ba01e18cff2b5210cef954bc387c20cffa87784466e793e0e088e` |
-| Go SDK | [weir-go](https://github.com/batchstream/weir-go) v0.23.0 |
+| Go SDK | [weir-go](https://github.com/batchstream/weir-go) v0.23.1 |
 
 `Chart.yaml` records the server source and `values.yaml` pins the image. Both the
 validation and release workflows install that exact source with `go install`.
