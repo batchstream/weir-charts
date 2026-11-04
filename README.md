@@ -1,3 +1,19 @@
+<p align="center">
+  <img src=".github/assets/banner.svg" alt="weir-charts: run Weir Store groups with Helm." width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/batchstream/weir-charts/actions/workflows/ci.yaml"><img src="https://github.com/batchstream/weir-charts/actions/workflows/ci.yaml/badge.svg?branch=main" alt="Validate chart"></a>
+  <a href="charts/weir/Chart.yaml"><img src="https://img.shields.io/badge/dynamic/yaml?url=https://raw.githubusercontent.com/batchstream/weir-charts/main/charts/weir/Chart.yaml&amp;query=%24.version&amp;label=chart" alt="Chart version"></a>
+  <img src="https://img.shields.io/badge/Kubernetes-1.30%2B-326CE5" alt="Kubernetes 1.30+">
+  <img src="https://img.shields.io/badge/Helm-3.17%2B-0F1689" alt="Helm 3.17+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/batchstream/weir">Server</a> &nbsp;·&nbsp; <a href="https://github.com/batchstream/weir-go">Go SDK</a> &nbsp;·&nbsp; <a href="https://github.com/batchstream/weir-protocol">Protocol</a> &nbsp;·&nbsp; <strong>Helm chart</strong> &nbsp;·&nbsp; <a href="https://github.com/batchstream/weir-tests">System tests</a>
+</p>
+
 # Weir Helm charts
 
 Deploy [Weir](https://github.com/batchstream/weir), a synchronous MongoDB and Search data plane, on Kubernetes. Helm 3.17+ and Kubernetes 1.30+ are required. Chart `0.20.0-rc.1` targets server source [commit `5107986b882d`](https://github.com/batchstream/weir/commit/5107986b882da60751403c7e05bbbebdb12b3cdb). `Chart.yaml` records that source contract and `values.yaml` pins the immutable image `ghcr.io/batchstream/weir@sha256:b5d949cefb0ba01e18cff2b5210cef954bc387c20cffa87784466e793e0e088e`; both validation and release workflows install that exact source with `go install`.
@@ -96,3 +112,9 @@ scripts/kind-upgrade.sh FROM_CHECKOUT . path/to/weir-soak [path/to/previous-weir
 ```
 
 A reviewed `weir-VERSION` tag on `main` publishes the OCI Chart and a GitHub release with the archive and SHA256SUMS. The workflow refuses a version whose OCI Chart already exists and creates the release before pushing, so a rerun never overwrites a published Chart. If the push fails after the release exists, verify the release archive against its SHA256SUMS and `helm push` it by hand. Source annotation, image digest and CI source pins must identify the same server revision.
+
+## Contributing and license
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request, and report
+vulnerabilities as described in [SECURITY.md](SECURITY.md). This repository is
+released under the [MIT License](LICENSE).
