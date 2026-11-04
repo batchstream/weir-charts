@@ -205,12 +205,12 @@ def main():
             raise RuntimeError("missing credential file unexpectedly accepted")
         # Server validation owns backend semantics beyond the Chart's schema.
         invalid = copy.deepcopy(fixtures[0][1])
-        invalid["stores"][0]["mongodb"]["uri"] = "mongodb://mongo/?directConnection=true"
+        invalid["stores"][0]["mongodb"]["uri"] = "mongodb://mongo:27017/?readPreference=secondary"
         resources = render(invalid)
         try:
             validate_config(binary, resources, directory)
         except subprocess.CalledProcessError as error:
-            if "explicit valid host and port" not in error.stderr:
+            if "unsupported MongoDB URI option" not in error.stderr:
                 raise RuntimeError("invalid Store configuration rejected for another reason: "
                                    + error.stderr) from error
         else:
