@@ -18,4 +18,4 @@ vulnerabilities even if you cannot reproduce them on `main`.
 ## Deployment guidance
 
 Application traffic uses plaintext HTTP/2 inside a trusted, isolated network. See
-[Network and operations](README.md#network-and-operations).
+[Network](docs/operations.md#network).

@@ -15,7 +15,7 @@ For vulnerabilities, follow [SECURITY.md](SECURITY.md).
 ## Work locally
 
 Install Helm, Python 3 and the Go version the chart's workflows use, then follow
-[Develop and release](README.md#develop-and-release):
+[Development](docs/development.md):
 
 ```sh
 python3 -m venv .venv
@@ -32,5 +32,5 @@ rendered alerts and the autoscaling query; without it, that test is skipped.
 
 - Keep the change focused and explain the observed problem and resulting behavior.
 - Add a regression test when fixing behavior.
-- Update `values.schema.json`, the [examples](examples) and the README when values change.
-- When pinning a new server, pin it in [weir-tests](https://github.com/batchstream/weir-tests) first, then change the source annotation, `appVersion`, image digest, workflow pins, the README's references and the values in `tests/test_chart.py` together.
+- Update `values.schema.json`, the [examples](examples), the README and [docs](docs) when values change.
+- When pinning a new server, pin it in [weir-tests](https://github.com/batchstream/weir-tests) first, then change the source annotation, `appVersion`, image digest, workflow pins, the references in the README and [docs](docs) and the values in `tests/test_chart.py` together.
