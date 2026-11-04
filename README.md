@@ -39,11 +39,15 @@ validation and release workflows install that exact source with `go install`.
 
 | Item | Requirement |
 | --- | --- |
-| Helm | 3.17 or later |
+| Helm | 3.17 or later. CI tests 3.17.0. |
 | Kubernetes | 1.30 or later |
-| Backend | MongoDB or Search, reachable from the namespace |
+| Cluster capacity | Each Pod requests and limits 2 CPU and 3 GiB by default. A rollout runs one extra Pod. |
+| MongoDB | A nonsharded replica set with the client `bulkWrite` command (MongoDB 8.0 or later). |
+| Search | Elasticsearch or OpenSearch. |
+| Collections and indices | Must exist before typed reads and mutations. |
 | Network | The application port uses plaintext HTTP/2. Use an isolated network and a CNI that enforces NetworkPolicy. |
 | Optional | Prometheus Operator for monitoring. KEDA for autoscaling. |
+| Development | Go 1.27.3 and Python 3, to run the chart tests. |
 
 ## Quick start
 
@@ -57,8 +61,10 @@ git clone https://github.com/batchstream/weir-charts.git
 cd weir-charts
 ```
 
-**Step 2.** Check `examples/mongo.yaml`. It expects a MongoDB replica-set member
-at `mongo:27017` on Pods labeled `app: mongo`. Edit the file if yours differ.
+**Step 2.** Check `examples/mongo.yaml`. It expects MongoDB in the namespace
+`application`, with its primary at `mongo:27017` on Pods labeled `app: mongo`, and
+no authentication. Edit the file if yours differ. For authentication, see
+[Credentials](docs/configuration.md#credentials).
 
 ```yaml
 stores:
@@ -76,20 +82,30 @@ networkPolicy:
       port: 27017
 ```
 
+This example uses MongoDB direct mode, which has no failover. For production, use
+a replica-set URI. See
+[MongoDB connection modes](https://github.com/batchstream/weir/blob/main/docs/configuration.md#mongodb).
+
 **Step 3.** Install the release. Replace `your-context` with your cluster context.
 
 ```sh
-helm upgrade --install mongo ./charts/weir --namespace application --create-namespace \
+helm upgrade --install mongo ./charts/weir --namespace application \
   --kube-context your-context -f examples/mongo.yaml --atomic --wait --timeout 5m
 ```
 
+Helm reports `STATUS: deployed` and prints the SDK address. With `--atomic`, Helm
+removes a failed install after the timeout. Omit `--atomic` to keep the Pods for
+inspection.
+
 **Step 4.** Allow your client Pods to connect. They must run in the same namespace
-and carry this label.
+and carry this label on the Pod template.
 
 ```yaml
-metadata:
-  labels:
-    weir-client: "true"
+spec:
+  template:
+    metadata:
+      labels:
+        weir-client: "true"
 ```
 
 **Step 5.** Connect with the SDK, using the address that Helm prints. Keep the
@@ -99,8 +115,10 @@ trailing dot.
 client, err := weir.New("mongo-weir.application.svc.cluster.local.:7447")
 ```
 
-See the [Go SDK quick start](https://github.com/batchstream/weir-go#quick-start)
-for a complete client.
+To try it, run the program from the
+[Go SDK quick start](https://github.com/batchstream/weir-go#quick-start) in that Pod
+with this address. The program uses the collection `weir_example.records`, which
+must exist first.
 
 ## Documentation
 
@@ -117,7 +135,7 @@ for a complete client.
 | [mongo.yaml](examples/mongo.yaml) | A group with a MongoDB Store |
 | [search.yaml](examples/search.yaml) | A group with a Search Store |
 | [credential-files.yaml](examples/credential-files.yaml) | Backend credentials from a mounted Secret |
-| [three-replicas.yaml](examples/three-replicas.yaml) | Three replicas spread across nodes |
+| [three-replicas.yaml](examples/three-replicas.yaml) | Three replicas spread across nodes. Update its selector for your release. |
 | [prometheus-alerts.yaml](examples/prometheus-alerts.yaml) | ServiceMonitor, alerts and dashboard |
 | [prometheus-autoscaling.yaml](examples/prometheus-autoscaling.yaml) | KEDA autoscaling on Weir's own CPU |
 
