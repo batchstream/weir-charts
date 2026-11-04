@@ -23,7 +23,7 @@ jobs:
           version: v3.17.0
       - run: pip install -r requirements-dev.txt
       - name: Install the Weir contract validator
-        run: GOBIN="$PWD/.bin" go install github.com/batchstream/weir/cmd/weir@3717479d2820c8e99927d4e91f7c32298e0c32b1
+        run: GOBIN="$PWD/.bin" go install github.com/batchstream/weir/cmd/weir@5107986b882da60751403c7e05bbbebdb12b3cdb
       - name: Install promtool
         run: |
           curl -fsSLo "$RUNNER_TEMP/prometheus.tar.gz" https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-3.15.1.linux-amd64.tar.gz
@@ -59,7 +59,7 @@ jobs:
           bin=$PWD/.bin
           git clone -q https://github.com/batchstream/weir-tests "$RUNNER_TEMP/weir-tests"
           cd "$RUNNER_TEMP/weir-tests"
-          git checkout -q 3206370f8b6cea30e2a265f55b0088b3285742f3
+          git checkout -q 1347bcdb3351852b7df484e778a757d0d2e80ff3
           CGO_ENABLED=0 go build -o "$bin/weir-soak" ./cmd/weir-soak
           version=$(jq -er .weir_go_previous versions.json)
           protocol=$(go mod download -json "github.com/batchstream/weir-go@$version" | jq -er .GoMod | xargs awk '$1 == "github.com/batchstream/weir-protocol" {print $2}')
