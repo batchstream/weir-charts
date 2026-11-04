@@ -25,11 +25,12 @@ make test PYTHON=.venv/bin/python WEIR_BIN="$PWD/.bin/weir"
 ```
 
 `SOURCE_REVISION` is the `weir.batchstream.io/source-revision` annotation in
-`Chart.yaml`. `make test` also needs `promtool` on `PATH` or in `PROMTOOL`.
+`Chart.yaml`. With `promtool` on `PATH` or in `PROMTOOL`, `make test` also checks the
+rendered alerts and the autoscaling query; without it, that test is skipped.
 
 ## Prepare a pull request
 
 - Keep the change focused and explain the observed problem and resulting behavior.
 - Add a regression test when fixing behavior.
 - Update `values.schema.json`, the [examples](examples) and the README when values change.
-- Change the source revision, the image digest and the README's references to them together.
+- When pinning a new server, pin it in [weir-tests](https://github.com/batchstream/weir-tests) first, then change the source annotation, `appVersion`, image digest, workflow pins, the README's references and the values in `tests/test_chart.py` together.
