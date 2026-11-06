@@ -33,4 +33,4 @@ rendered alerts and the autoscaling query; without it, that test is skipped.
 - Keep the change focused and explain the observed problem and resulting behavior.
 - Add a regression test when fixing behavior.
 - Update `values.schema.json`, the [examples](examples), the README and [docs](docs) when values change.
-- When pinning a new server, pin it in [weir-tests](https://github.com/batchstream/weir-tests) first, then change the source annotation, `appVersion`, image digest, workflow pins, the references in the README and [docs](docs) and the values in `tests/test_chart.py` together.
+- When pinning a new server, change the source annotation, `appVersion`, image digest, workflow pins, the references in the README and [docs](docs) and the values in `tests/test_chart.py` together.
