@@ -16,10 +16,11 @@ make package PYTHON=.venv/bin/python WEIR_BIN="$PWD/.bin/weir"
 
 ## Rollout test
 
-CI also runs `scripts/kind-rollout.sh` on every change. In a kind cluster of its own, under load from `weir-soak` with `-no-errors`, it rolls a release of this checkout's Chart out twice at one replica, replaces the replica with one that starts 30 seconds late, scales to three replicas, rolls the three out twice and scales back down. The change fails if a rollout does not complete, a caller saw any error or an outcome did not hold. Every rollout setting stays the Chart's default, and the test measures no throughput. To run it locally, build `weir-soak` from [weir-tests](https://github.com/batchstream/weir-tests) for the cluster's platform; the script uses a kubeconfig of its own and ignores your current context and Helm settings:
+CI also runs `scripts/kind-rollout.sh` on every change. In a kind cluster of its own, under load from `weir-soak` with `-no-errors`, it rolls a release of this checkout's Chart out twice at one replica, replaces the replica with one that starts 30 seconds late, scales to three replicas, rolls the three out twice and scales back down. The change fails if a rollout does not complete, a caller saw any error or an outcome did not hold. Every rollout setting stays the Chart's default, and the test measures no throughput. To run it locally, build `weir-soak` for the cluster's platform from a [weir-tests](https://github.com/batchstream/weir-tests) checkout at the revision `ci.yaml` installs. The script uses a kubeconfig of its own and ignores your current context and Helm settings. For kind on an arm64 Mac:
 
 ```sh
-scripts/kind-rollout.sh path/to/weir-soak
+(cd path/to/weir-tests && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o weir-soak ./cmd/weir-soak)
+scripts/kind-rollout.sh path/to/weir-tests/weir-soak
 ```
 
 ## Release
