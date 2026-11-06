@@ -2,7 +2,7 @@
 # usage: kind-rollout.sh <soak-binary>
 # Creates a kind cluster of its own and changes a release of this checkout's chart
 # under load: rollouts at one replica, a replacement that starts late, up to three
-# replicas, a rollout of the three, and back down. Exits non-zero if a change does
+# replicas, rollouts of the three, and back down. Exits non-zero if a change does
 # not complete, a caller saw any error or an outcome did not hold. It measures no
 # throughput.
 #

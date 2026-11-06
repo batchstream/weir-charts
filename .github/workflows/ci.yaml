@@ -52,7 +52,7 @@ jobs:
       - name: Install kind and the soak client
         run: |
           GOBIN="$PWD/.bin" go install sigs.k8s.io/kind@v0.33.0
-          GOBIN="$PWD/.bin" CGO_ENABLED=0 go install github.com/batchstream/weir-tests/cmd/weir-soak@c992d6f7809829cb1e12af9204e1b461308f1b6d
+          GOBIN="$PWD/.bin" CGO_ENABLED=0 go install github.com/batchstream/weir-tests/cmd/weir-soak@df28116e9c492e15db3ef19ab6a70bd2ea3110a3
       - name: Roll the chart out under load
         env:
           KIND: .bin/kind
