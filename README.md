@@ -28,7 +28,7 @@ MongoDB and Search data plane, on Kubernetes.
 | Item | Version |
 | --- | --- |
 | Chart | `0.20.0` |
-| Server source | [commit `56b193a2252a`](https://github.com/batchstream/weir/commit/56b193a2252a299d8a1d8661c7fae25bb78c2518) |
+| Server source | v0.3.0, [commit `56b193a2252a`](https://github.com/batchstream/weir/commit/56b193a2252a299d8a1d8661c7fae25bb78c2518) |
 | Server image | `ghcr.io/batchstream/weir@sha256:6a84f2b3f3ff0776db0f01185d1b0e2cc108cf2e406fbc81b5824206106466b7` |
 | Go SDK | [weir-go](https://github.com/batchstream/weir-go) v0.24.1 |
 
