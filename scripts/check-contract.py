@@ -188,6 +188,9 @@ def main():
         (directory / "test-user.txt").write_text("test-user\n")
         (directory / "test-password.txt").write_text("test-password\n")
         validate_config(binary, render(files), directory)
+        # SCRAM over an explicit tls=false is accepted for networks without TLS.
+        store["mongodb"]["uri"] = store["mongodb"]["uri"].replace("tls=true", "tls=false")
+        validate_config(binary, render(files), directory)
         files = copy.deepcopy(fixtures[1][1])
         store = files["stores"][0]
         store["search"]["url"] = "https://search:9200"
