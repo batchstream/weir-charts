@@ -49,6 +49,18 @@ def validate_config(binary, resources, directory):
     return container, args
 
 
+def expect_rejected(binary, resources, directory, message):
+    """Require the binary to reject the configuration with message."""
+    try:
+        validate_config(binary, resources, directory)
+    except subprocess.CalledProcessError as error:
+        if message not in error.stderr:
+            raise RuntimeError("configuration rejected for another reason than "
+                               + repr(message) + ": " + error.stderr) from error
+    else:
+        raise RuntimeError("configuration unexpectedly accepted; expected " + repr(message))
+
+
 def batching_policy():
     """Return valid values for every batching key."""
     policy = {"max_operations": 64, "max_bytes": "2MiB", "max_wait": "0s", "max_in_flight": 8,
@@ -188,6 +200,19 @@ def main():
         (directory / "test-user.txt").write_text("test-user\n")
         (directory / "test-password.txt").write_text("test-password\n")
         validate_config(binary, render(files), directory)
+        # SCRAM over an explicit tls=false is accepted for networks without TLS,
+        # but not with a CA file, and authentication needs an explicit tls.
+        store["mongodb"]["uri"] = ("mongodb://mongo:27017/?directConnection=true"
+                                   "&authMechanism=SCRAM-SHA-256&authSource=admin&tls=false")
+        validate_config(binary, render(files), directory)
+        store["tls"] = {"ca_file": "test-ca.pem"}
+        (directory / "test-ca.pem").write_text("")
+        expect_rejected(binary, render(files), directory, "MongoDB CA file requires TLS")
+        del store["tls"]
+        store["mongodb"]["uri"] = ("mongodb://mongo:27017/?directConnection=true"
+                                   "&authMechanism=SCRAM-SHA-256&authSource=admin")
+        expect_rejected(binary, render(files), directory,
+                        "MongoDB URI authentication requires explicit SCRAM-SHA-256, authSource, and tls")
         files = copy.deepcopy(fixtures[1][1])
         store = files["stores"][0]
         store["search"]["url"] = "https://search:9200"
@@ -195,26 +220,11 @@ def main():
         validate_config(binary, render(files, "search"), directory)
         # check reads the referenced files rather than trusting their names.
         store["authentication"]["password_file"] = "missing-password.txt"
-        try:
-            validate_config(binary, render(files, "search"), directory)
-        except subprocess.CalledProcessError as error:
-            if "credential file unavailable" not in error.stderr:
-                raise RuntimeError("missing credential file rejected for another reason: "
-                                   + error.stderr) from error
-        else:
-            raise RuntimeError("missing credential file unexpectedly accepted")
+        expect_rejected(binary, render(files, "search"), directory, "credential file unavailable")
         # Server validation owns backend semantics beyond the Chart's schema.
         invalid = copy.deepcopy(fixtures[0][1])
         invalid["stores"][0]["mongodb"]["uri"] = "mongodb://mongo:27017/?readPreference=secondary"
-        resources = render(invalid)
-        try:
-            validate_config(binary, resources, directory)
-        except subprocess.CalledProcessError as error:
-            if "unsupported MongoDB URI option" not in error.stderr:
-                raise RuntimeError("invalid Store configuration rejected for another reason: "
-                                   + error.stderr) from error
-        else:
-            raise RuntimeError("invalid Store configuration unexpectedly accepted")
+        expect_rejected(binary, render(invalid), directory, "unsupported MongoDB URI option")
         check_scale(binary, directory)
         check_runtime(binary, directory)
     print("Contract checks passed: MongoDB/Search configurations, batching, scale, "
