@@ -519,11 +519,11 @@ class ChartTests(unittest.TestCase):
                         listener.__exit__.assert_called_once()
 
     def test_chart_identity_matches_pinned_image(self):
-        revision = "56b193a2252a299d8a1d8661c7fae25bb78c2518"
-        digest = "sha256:6a84f2b3f3ff0776db0f01185d1b0e2cc108cf2e406fbc81b5824206106466b7"
+        revision = "db27d25f0d80798f4e9277c24339d75e945cea62"
+        digest = "sha256:07f07d339e1deff548d8d936561b3a47f585c78dbdefac31f18d420228f61567"
         chart = yaml.safe_load((ROOT / "charts/weir/Chart.yaml").read_text())
         values = yaml.safe_load((ROOT / "charts/weir/values.yaml").read_text())
-        self.assertEqual(chart["version"], "0.20.0")
+        self.assertEqual(chart["version"], "0.21.0")
         self.assertEqual(chart["annotations"]["weir.batchstream.io/source-revision"], revision)
         self.assertEqual(values["image"]["repository"], "ghcr.io/batchstream/weir")
         self.assertEqual(values["image"]["digest"], digest)

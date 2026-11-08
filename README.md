@@ -27,9 +27,9 @@ MongoDB and Search data plane, on Kubernetes.
 
 | Item | Version |
 | --- | --- |
-| Chart | `0.20.0` |
-| Server source | v0.3.0, [commit `56b193a2252a`](https://github.com/batchstream/weir/commit/56b193a2252a299d8a1d8661c7fae25bb78c2518) |
-| Server image | `ghcr.io/batchstream/weir@sha256:6a84f2b3f3ff0776db0f01185d1b0e2cc108cf2e406fbc81b5824206106466b7` |
+| Chart | `0.21.0` |
+| Server source | v0.4.0, [commit `db27d25f0d80`](https://github.com/batchstream/weir/commit/db27d25f0d80798f4e9277c24339d75e945cea62) |
+| Server image | `ghcr.io/batchstream/weir@sha256:07f07d339e1deff548d8d936561b3a47f585c78dbdefac31f18d420228f61567` |
 | Go SDK | [weir-go](https://github.com/batchstream/weir-go) v0.24.1 |
 
 `Chart.yaml` records the server source and `values.yaml` pins the image. Both the
