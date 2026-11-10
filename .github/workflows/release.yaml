@@ -32,7 +32,7 @@ jobs:
           version: v3.17.0
       - run: pip install -r requirements-dev.txt
       - name: Install the Weir contract validator
-        run: GOBIN="$PWD/.bin" go install github.com/batchstream/weir/cmd/weir@db27d25f0d80798f4e9277c24339d75e945cea62
+        run: GOBIN="$PWD/.bin" go install github.com/batchstream/weir/cmd/weir@31656bc6d0d7247f222842ce8bd70988d6bdd72b
       - name: Install promtool
         run: |
           curl -fsSLo "$RUNNER_TEMP/prometheus.tar.gz" https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-3.15.1.linux-amd64.tar.gz
