@@ -6,7 +6,7 @@ nameOverride: ""
 fullnameOverride: ""
 image:
   repository: ghcr.io/batchstream/weir
-  digest: sha256:d12d95076ce756ffbb07286c135e67acbd3bb58c15b89a12b74fecbc1c4ced15
+  digest: sha256:885f052ba31943409a99b442ca74aa02a75665e439f98887684fcd2568c1ce05
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 # Weir Store definitions; backends and credentials are provisioned separately.
