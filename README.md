@@ -27,9 +27,9 @@ MongoDB and Search data plane, on Kubernetes.
 
 | Item | Version |
 | --- | --- |
-| Chart | `0.22.0` |
-| Server source | v0.4.1, [commit `31656bc6d0d7`](https://github.com/batchstream/weir/commit/31656bc6d0d7247f222842ce8bd70988d6bdd72b) |
-| Server image | `ghcr.io/batchstream/weir@sha256:d12d95076ce756ffbb07286c135e67acbd3bb58c15b89a12b74fecbc1c4ced15` |
+| Chart | `0.23.0` |
+| Server source | v0.4.2, [commit `727f6003c4e0`](https://github.com/batchstream/weir/commit/727f6003c4e05087b112a653bc412f0ba0004ab3) |
+| Server image | `ghcr.io/batchstream/weir@sha256:885f052ba31943409a99b442ca74aa02a75665e439f98887684fcd2568c1ce05` |
 | Go SDK | [weir-go](https://github.com/batchstream/weir-go) v0.24.1 |
 
 `Chart.yaml` records the server source and `values.yaml` pins the image. Both the
@@ -47,7 +47,7 @@ validation and release workflows install that exact source with `go install`.
 | Collections and indices | Must exist before typed reads and mutations. |
 | Network | The application port uses plaintext HTTP/2. Use an isolated network and a CNI that enforces NetworkPolicy. |
 | Optional | Prometheus Operator for monitoring. KEDA for autoscaling. |
-| Development | Go 1.27.3 and Python 3, to run the chart tests. |
+| Development | Go 1.27.4 and Python 3, to run the chart tests. |
 
 ## Quick start
 
